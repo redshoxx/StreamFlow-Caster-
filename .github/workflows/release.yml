@@ -1,0 +1,64 @@
+name: Release Android artifacts
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  mobile:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter create --platforms=android --org com.redshoxx --project-name streamflow .
+      - run: flutter pub get
+      - run: flutter build apk --release
+      - run: cp build/app/outputs/flutter-apk/app-release.apk ../../StreamFlow-Mobile-release.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mobile-apk
+          path: StreamFlow-Mobile-release.apk
+
+  tv:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/android-tv
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.5.0"
+      - run: gradle :app:assembleDebug
+      - run: cp app/build/outputs/apk/debug/app-debug.apk ../../StreamFlow-TV-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tv-apk
+          path: StreamFlow-TV-debug.apk
+
+  github-release:
+    needs: [mobile, tv]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            StreamFlow-Mobile-release.apk
+            StreamFlow-TV-debug.apk
+          generate_release_notes: true

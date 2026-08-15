@@ -1,0 +1,16 @@
+{
+  "name": "StreamFlow",
+  "identifier": "com.redshoxx.streamflow.source",
+  "apps": [
+    {
+      "name": "StreamFlow",
+      "bundleIdentifier": "com.redshoxx.streamflow",
+      "developerName": "redshoxx",
+      "subtitle": "Web media casting controller",
+      "localizedDescription": "StreamFlow casts authorized web and local media to supported receivers.",
+      "iconURL": "https://example.invalid/streamflow-icon.png",
+      "versions": []
+    }
+  ],
+  "news": []
+}
