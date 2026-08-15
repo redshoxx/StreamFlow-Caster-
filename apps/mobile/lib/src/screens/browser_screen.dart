@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../app/streamflow_controller.dart';
+import '../browser/ad_blocker.dart';
 import '../media/media_detector.dart';
 import '../models/browser_entry.dart';
 import '../models/cast_device.dart';
@@ -25,16 +26,31 @@ class _BrowserScreenState extends State<BrowserScreen> {
   late final WebViewController _web;
   final _address = TextEditingController(text: 'https://www.google.com');
   final List<DetectedMedia> _pageMedia = <DetectedMedia>[];
+  final _adBlocker = AdBlocker();
+
   var _progress = 0;
   var _pageTitle = 'Browser';
+  var _adBlockEnabled = true;
+  var _blockedAds = 0;
   Uri? _currentUri;
 
   @override
   void initState() {
     super.initState();
     _currentUri = Uri.parse(_address.text);
+    unawaited(_restoreAdBlocker());
+
     _web = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..addJavaScriptChannel(
+        'StreamFlowAdBlock',
+        onMessageReceived: (message) {
+          if (!mounted || !_adBlockEnabled) return;
+          final delta = int.tryParse(message.message) ?? 0;
+          if (delta <= 0) return;
+          setState(() => _blockedAds += delta);
+        },
+      )
       ..setNavigationDelegate(
         NavigationDelegate(
           onProgress: (value) {
@@ -46,12 +62,24 @@ class _BrowserScreenState extends State<BrowserScreen> {
               _address.text = url;
               _currentUri = Uri.tryParse(url);
               _progress = 0;
+              _blockedAds = 0;
               _pageMedia.clear();
             });
+
+            if (_adBlockEnabled) {
+              Future<void>.delayed(const Duration(milliseconds: 150), () async {
+                if (mounted && _adBlockEnabled) await _applyAdBlocker();
+              });
+              Future<void>.delayed(const Duration(milliseconds: 700), () async {
+                if (mounted && _adBlockEnabled) await _applyAdBlocker();
+              });
+            }
           },
           onPageFinished: (url) async {
             if (!mounted) return;
             _address.text = url;
+            if (_adBlockEnabled) await _applyAdBlocker();
+
             final title = await _web.getTitle();
             if (!mounted) return;
 
@@ -70,16 +98,65 @@ class _BrowserScreenState extends State<BrowserScreen> {
 
             await _scan();
             Future<void>.delayed(const Duration(seconds: 2), () async {
-              if (mounted) await _scan();
+              if (!mounted) return;
+              if (_adBlockEnabled) await _applyAdBlocker();
+              await _scan();
             });
           },
           onNavigationRequest: (request) {
+            if (_adBlockEnabled && _adBlocker.shouldBlockUrl(request.url)) {
+              if (mounted) setState(() => _blockedAds += 1);
+              return NavigationDecision.prevent;
+            }
             _capture(request.url);
             return NavigationDecision.navigate;
           },
         ),
       )
       ..loadRequest(Uri.parse(_address.text));
+  }
+
+  Future<void> _restoreAdBlocker() async {
+    try {
+      final enabled = await _adBlocker.loadEnabled();
+      if (!mounted) return;
+      if (enabled != _adBlockEnabled) setState(() => _adBlockEnabled = enabled);
+      if (enabled) await _applyAdBlocker();
+    } catch (_) {
+      // Ad blocking stays enabled by default if preferences cannot be read.
+    }
+  }
+
+  Future<void> _applyAdBlocker() async {
+    if (!_adBlockEnabled) return;
+    try {
+      await _web.runJavaScript(_adBlocker.javaScript);
+    } catch (_) {
+      // Some documents do not allow script execution during early load stages.
+    }
+  }
+
+  Future<void> _toggleAdBlocker() async {
+    final enabled = !_adBlockEnabled;
+    setState(() {
+      _adBlockEnabled = enabled;
+      _blockedAds = 0;
+    });
+
+    try {
+      await _adBlocker.saveEnabled(enabled);
+    } catch (_) {}
+
+    if (enabled) {
+      await _applyAdBlocker();
+    } else {
+      await _web.reload();
+    }
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(enabled ? 'Adblocker aktiviert.' : 'Adblocker deaktiviert.')),
+    );
   }
 
   Future<void> _scan() async {
@@ -104,6 +181,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
   }
 
   void _capture(String url, {String? label, String? mime}) {
+    if (_adBlockEnabled && _adBlocker.shouldBlockUrl(url)) return;
     final candidate = MediaDetector.fromUrl(url, label: label, mime: mime);
     if (candidate == null || _pageMedia.contains(candidate)) return;
     if (mounted) setState(() => _pageMedia.add(candidate));
@@ -181,6 +259,20 @@ class _BrowserScreenState extends State<BrowserScreen> {
                   tooltip: 'Favoriten und Verlauf',
                   onPressed: () => _showLibrary(context),
                   icon: const Icon(Icons.bookmarks_outlined),
+                ),
+                IconButton(
+                  tooltip: _adBlockEnabled
+                      ? 'Adblocker aktiv • $_blockedAds blockiert'
+                      : 'Adblocker deaktiviert',
+                  onPressed: _toggleAdBlocker,
+                  icon: Badge(
+                    isLabelVisible: _adBlockEnabled && _blockedAds > 0,
+                    label: Text(_blockedAds > 99 ? '99+' : '$_blockedAds'),
+                    child: Icon(
+                      Icons.security,
+                      color: _adBlockEnabled ? colors.primary : colors.onSurfaceVariant,
+                    ),
+                  ),
                 ),
                 if (widget.controller.isCasting)
                   IconButton(
