@@ -7,7 +7,7 @@
 - Added GET/HEAD and byte-range support (`206 Partial Content`) for seeking large local files.
 - Added video and audio file selection with size/status UI.
 - Cast-session cleanup now shuts down temporary local streaming resources automatically.
-- Updated `file_picker` to the current stable 11.0.2 security-fixed release.
+- Uses Flutter's first-party `file_selector` plugin for native Android/iOS file selection and AGP 9 compatibility.
 
 ## 0.2.0 - 2026-08-15
 
