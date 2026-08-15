@@ -4,7 +4,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ["apps/android-tv/**"]
+    paths:
+      - "apps/android-tv/**"
+      - ".github/workflows/android-tv.yml"
 
 jobs:
   apk:
@@ -14,15 +16,57 @@ jobs:
         working-directory: apps/android-tv
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "9.5.0"
-      - run: gradle :app:assembleDebug
+      - name: Build test and release APKs
+        run: gradle :app:assembleDebug :app:assembleRelease
+      - name: Prepare APK artifacts
+        env:
+          TV_KEYSTORE_BASE64: ${{ secrets.ANDROID_TV_KEYSTORE_BASE64 }}
+          TV_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_TV_KEYSTORE_PASSWORD }}
+          TV_KEY_ALIAS: ${{ secrets.ANDROID_TV_KEY_ALIAS }}
+          TV_KEY_PASSWORD: ${{ secrets.ANDROID_TV_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p ../../dist
+          cp app/build/outputs/apk/debug/app-debug.apk ../../dist/StreamFlow-TV-test.apk
+
+          RELEASE_APK="$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' | head -n 1)"
+          if [ -z "$RELEASE_APK" ]; then
+            echo "No release APK produced"
+            exit 1
+          fi
+          cp "$RELEASE_APK" ../../dist/StreamFlow-TV-release-unsigned.apk
+
+          if [ -n "${TV_KEYSTORE_BASE64:-}" ] && [ -n "${TV_KEYSTORE_PASSWORD:-}" ] && [ -n "${TV_KEY_ALIAS:-}" ] && [ -n "${TV_KEY_PASSWORD:-}" ]; then
+            echo "$TV_KEYSTORE_BASE64" | base64 --decode > /tmp/streamflow-tv.jks
+            APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+            "$APKSIGNER" sign \
+              --ks /tmp/streamflow-tv.jks \
+              --ks-key-alias "$TV_KEY_ALIAS" \
+              --ks-pass env:TV_KEYSTORE_PASSWORD \
+              --key-pass env:TV_KEY_PASSWORD \
+              --out ../../dist/StreamFlow-TV-release.apk \
+              ../../dist/StreamFlow-TV-release-unsigned.apk
+            "$APKSIGNER" verify --verbose ../../dist/StreamFlow-TV-release.apk
+            rm -f /tmp/streamflow-tv.jks
+          else
+            echo "Android TV signing secrets are not configured; producing unsigned release + installable test APK."
+          fi
+
+          cd ../../dist
+          sha256sum StreamFlow-TV-*.apk > StreamFlow-TV.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: StreamFlow-TV-debug
-          path: apps/android-tv/app/build/outputs/apk/debug/app-debug.apk
+          name: StreamFlow-TV
+          path: |
+            dist/StreamFlow-TV-test.apk
+            dist/StreamFlow-TV-release-unsigned.apk
+            dist/StreamFlow-TV-release.apk
+            dist/StreamFlow-TV.sha256
+          if-no-files-found: warn
