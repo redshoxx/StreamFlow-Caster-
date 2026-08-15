@@ -22,6 +22,7 @@ class StreamFlowController extends ChangeNotifier {
   final List<BrowserEntry> _favorites = <BrowserEntry>[];
   VoidCallback? _castCleanup;
   bool _browserLibraryLoaded = false;
+  bool _disposed = false;
 
   List<DetectedMedia> get detectedMedia => List.unmodifiable(_detectedMedia);
   List<BrowserEntry> get history => List.unmodifiable(_history);
@@ -42,15 +43,20 @@ class StreamFlowController extends ChangeNotifier {
   Future<void> _loadBrowserLibrary() async {
     try {
       final snapshot = await _browserLibraryStore.load();
+      if (_disposed) return;
       _history
         ..clear()
         ..addAll(snapshot.history.take(_maxHistoryEntries));
       _favorites
         ..clear()
         ..addAll(snapshot.favorites.take(_maxFavoriteEntries));
+    } catch (_) {
+      // Corrupted or temporarily unavailable local storage must not block app startup.
     } finally {
-      _browserLibraryLoaded = true;
-      notifyListeners();
+      if (!_disposed) {
+        _browserLibraryLoaded = true;
+        notifyListeners();
+      }
     }
   }
 
@@ -110,15 +116,17 @@ class StreamFlowController extends ChangeNotifier {
   }
 
   Future<void> removeFavorite(Uri url) async {
-    final changed = _favorites.removeWhere((entry) => _sameUrl(entry.url, url)) > 0;
-    if (!changed) return;
+    final before = _favorites.length;
+    _favorites.removeWhere((entry) => _sameUrl(entry.url, url));
+    if (_favorites.length == before) return;
     notifyListeners();
     await _browserLibraryStore.saveFavorites(_favorites);
   }
 
   Future<void> removeHistoryEntry(Uri url) async {
-    final changed = _history.removeWhere((entry) => _sameUrl(entry.url, url)) > 0;
-    if (!changed) return;
+    final before = _history.length;
+    _history.removeWhere((entry) => _sameUrl(entry.url, url));
+    if (_history.length == before) return;
     notifyListeners();
     await _browserLibraryStore.saveHistory(_history);
   }
@@ -163,6 +171,7 @@ class StreamFlowController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _castCleanup?.call();
     _castCleanup = null;
     super.dispose();
