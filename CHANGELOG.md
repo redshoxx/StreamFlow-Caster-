@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.5.1 - 2026-08-15
+
+- Release hardening across Android, iOS and Android TV.
+- Serialized all Media3/ExoPlayer access onto the Android TV application thread.
+- Added authenticated receiver control with an 8-digit TV pairing code and persisted trusted-device credentials on mobile.
+- Added pairing rate limiting, request-size limits and stricter receiver URL/seek/volume validation.
+- Removed permissive receiver CORS and added no-cache / nosniff response hardening.
+- Prevented overlapping remote-control status polling and protected user seek interactions from background refreshes.
+- Fixed receiver stop state so the TV returns cleanly to the idle screen.
+- Fixed browser-history startup races and serialized local preference writes.
+- Capped session media collections to prevent unbounded memory growth.
+- Reduced ad-block MutationObserver work by scanning only newly inserted DOM nodes.
+- Hardened mDNS discovery lifecycle and IPv4/IPv6 receiver addressing.
+- Hardened local-file HTTP streaming, interface selection, range responses and stream-error handling.
+- Added HTTP byte-range integration tests and receiver/pairing regression tests.
+- Enabled Android TV R8/resource shrinking and Android release lint gates.
+- Added Android TV launcher icon/banner assets required for Leanback launchers.
+- Pinned the CI Flutter toolchain and strengthened Android production-signing gates.
+
 ## 0.5.0 - 2026-08-15
 
 - Added a built-in ad and tracker blocker to the Android/iOS browser.

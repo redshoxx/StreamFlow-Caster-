@@ -1,101 +1,60 @@
 # StreamFlow Caster
 
-Clean-room cross-platform web media caster inspired by the workflow of Web Video Cast, with an original codebase and UI.
+StreamFlow is a clean-room cross-platform web-media caster for Android, iPhone/iPad and Android TV / Google TV.
 
-## Targets
+The project is designed to browse normal websites, detect directly playable media, select local media files and send supported URLs/files to a StreamFlow TV receiver on the same local network.
 
-- Android phone/tablet (Flutter)
-- iPhone/iPad (Flutter, AltStore-compatible build path)
-- Android TV / Google TV receiver (Kotlin + Jetpack Compose + Media3)
+> StreamFlow does not implement DRM extraction, Widevine/FairPlay bypass, paywall bypass or access-control circumvention. Use it only with media you are authorized to access.
 
-## Implemented in this initial foundation
+## Current release-candidate scope — 0.5.1
 
-- Browser shell with WebView
-- DOM-based HTML5 media discovery (`video`, `audio`, `source`)
-- Media URL classification (MP4, WebM, HLS/M3U8, DASH/MPD, audio)
-- Android TV receiver discovery over mDNS/NSD (`_streamflow._tcp`)
-- Mobile receiver HTTP client (load/play/pause/seek/stop/status)
-- Local HTTP media server with byte-range support
-- Android TV receiver HTTP API
-- Android TV NSD advertisement
-- Media3 playback on Android TV
-- GitHub Actions for Flutter checks, Android mobile APK, Android TV APK and release artifacts
-- AltStore source template
+### Android / iOS mobile app
 
-## Important scope
+- Material 3 browser UI
+- WebView-based browsing
+- direct video/audio URL detection
+- HLS (`.m3u8`) and DASH (`.mpd`) detection
+- DOM media scanning
+- built-in ad/tracker blocker, enabled by default
+- persistent browser favorites and history
+- media library with type filters
+- mDNS/Zeroconf discovery for StreamFlow TV
+- one-time 8-digit TV pairing code, remembered per receiver
+- cast session state and Now Playing mini-player
+- play, pause, stop, seek, ±10 s and volume controls
+- local video/audio file selection
+- temporary tokenized LAN file server with HTTP byte-range support
+- system light/dark theme
 
-StreamFlow does not bypass DRM, authentication, paywalls, access controls, Widevine, FairPlay, PlayReady, or encrypted media authorization. It only handles media the user is authorized to access and that can legally/technically be played or cast.
+### Android TV / Google TV receiver
 
-## Repository layout
+- native Android TV application
+- Media3 / ExoPlayer playback
+- HLS and DASH playback through Media3
+- `_streamflow._tcp` mDNS advertisement
+- authenticated local receiver API
+- persistent 8-digit pairing code displayed on the idle screen
+- play, pause, stop, seek, volume and status endpoints
+- optimized release build with R8/resource shrinking
+- Android TV launcher icon/banner
 
-```text
-apps/
-  mobile/       Flutter controller/browser app
-  android-tv/   Native Android TV receiver
-.github/workflows/
-docs/
-scripts/
+## Pairing and receiver protocol
+
+StreamFlow TV advertises protocol version 2.
+
+Public discovery endpoint:
+
+```http
+GET /api/v1/health
 ```
 
-## Mobile prerequisites
+All control/status endpoints require the pairing header:
 
-The repository intentionally keeps generated Flutter platform scaffolding reproducible instead of committing machine-generated boilerplate.
-
-```bash
-cd apps/mobile
-flutter create --platforms=android,ios --org com.redshoxx --project-name streamflow .
-flutter pub get
-flutter run
+```http
+X-StreamFlow-Pairing-Code: 12345678
 ```
 
-The `flutter create` command preserves `lib/`, `test/`, and `pubspec.yaml` while generating native Android/iOS host projects.
-
-### Android release APK
-
-```bash
-cd apps/mobile
-flutter create --platforms=android --org com.redshoxx --project-name streamflow .
-flutter pub get
-flutter build apk --release
-```
-
-### iOS / AltStore IPA
-
-On macOS with Xcode:
-
-```bash
-cd apps/mobile
-flutter create --platforms=ios --org com.redshoxx --project-name streamflow .
-flutter pub get
-flutter build ios --release --no-codesign
-```
-
-Open `ios/Runner.xcworkspace`, choose your Apple Development team/bundle ID, archive, then export an IPA suitable for sideloading. AltStore signing/refresh rules still apply.
-
-## Android TV
-
-Requirements: JDK 17, Android SDK 37, Gradle 9.5+.
-
-```bash
-cd apps/android-tv
-gradle :app:assembleDebug
-```
-
-Release:
-
-```bash
-gradle :app:assembleRelease
-```
-
-## Receiver protocol
-
-The TV advertises:
-
-```text
-_streamflow._tcp
-```
-
-HTTP API:
+Supported authenticated endpoints:
 
 ```text
 GET  /api/v1/status
@@ -104,27 +63,94 @@ POST /api/v1/play
 POST /api/v1/pause
 POST /api/v1/stop
 POST /api/v1/seek
+POST /api/v1/volume
 ```
 
-`POST /api/v1/load` body:
+The receiver restricts media loading to HTTP/HTTPS URLs, limits request sizes and rate-limits repeated invalid pairing attempts.
 
-```json
-{
-  "url": "https://example.com/video.m3u8",
-  "title": "Example"
-}
+## Repository layout
+
+```text
+apps/
+  mobile/       Flutter Android/iOS controller
+  android-tv/   Native Kotlin/Compose TV receiver
+
+docs/
+  ARCHITECTURE.md
+  ROADMAP.md
+  SIGNING.md
+.github/workflows/
+  flutter-checks.yml
+  android-mobile.yml
+  android-tv.yml
+  ios-check.yml
+  release.yml
 ```
 
-`POST /api/v1/seek` body:
+## Local mobile development
 
-```json
-{ "positionMs": 42000 }
+The native Android/iOS host projects are generated reproducibly by Flutter.
+
+```bash
+cd apps/mobile
+flutter create --platforms=android,ios --org com.redshoxx --project-name streamflow .
+flutter pub get
+flutter analyze
+flutter test
 ```
 
-## Security roadmap
+Android test/release build:
 
-The first receiver foundation is LAN-only and intentionally small. Before a public release, complete pairing, per-device session tokens, request authentication, rate limiting, secure storage, and origin validation listed in `docs/ROADMAP.md`.
+```bash
+flutter build apk --release
+```
+
+iOS compile validation:
+
+```bash
+flutter build ios --release --no-codesign
+```
+
+## Android TV development
+
+Requirements: JDK 17 and Gradle 9.5 compatible tooling.
+
+```bash
+cd apps/android-tv
+gradle :app:lintRelease :app:assembleDebug :app:assembleRelease
+```
+
+## CI release gates
+
+Every relevant mobile change runs:
+
+- dependency resolution
+- `flutter analyze`
+- `flutter test`
+- Android release APK compilation
+- unsigned iOS release/AltStore IPA compilation
+
+Every Android TV change runs:
+
+- Android release lint
+- debug APK build
+- R8/resource-shrunk release APK build
+
+Tagged public releases additionally require stable production signing keys for both Android phone and Android TV builds. See `docs/SIGNING.md`.
+
+## Release status
+
+CI passing is necessary but not a substitute for physical-device validation. Before a public production release, validate at minimum:
+
+- Android phone on real Wi-Fi
+- iPhone with the iOS Local Network permission prompt
+- Android TV / Google TV pairing and discovery
+- HLS/DASH playback over a long session
+- large local-file seeking
+- app foreground/background transitions
+- router/VPN/multiple-interface edge cases
+- install → update using the same production signing identity
 
 ## License
 
-Apache-2.0. This repository contains original code only; no Web Video Cast source code, branding, icons, or proprietary assets are included.
+Apache-2.0. See `LICENSE`.

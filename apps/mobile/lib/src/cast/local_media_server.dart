@@ -6,6 +6,9 @@ import 'dart:math';
 import 'package:mime/mime.dart';
 
 class LocalMediaServer {
+  LocalMediaServer({String? advertisedHost}) : _advertisedHost = advertisedHost;
+
+  final String? _advertisedHost;
   HttpServer? _server;
   File? _file;
   String? _token;
@@ -22,7 +25,7 @@ class LocalMediaServer {
       );
     }
 
-    final host = await _findLanAddress();
+    final host = _advertisedHost ?? await _findLanAddress();
     final server = await HttpServer.bind(
       InternetAddress.anyIPv4,
       0,

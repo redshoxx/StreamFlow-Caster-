@@ -24,8 +24,17 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "9.5.0"
-      - name: Lint and build test/release APKs
-        run: gradle --no-daemon :app:lintRelease :app:assembleDebug :app:assembleRelease
+      - name: Android TV release lint
+        run: gradle --no-daemon :app:lintRelease
+      - name: Print lint report
+        if: always()
+        run: |
+          REPORT="$(find app/build -name 'lint-results-release.txt' | head -n 1)"
+          if [ -n "$REPORT" ]; then
+            cat "$REPORT"
+          fi
+      - name: Build test and optimized release APKs
+        run: gradle --no-daemon :app:assembleDebug :app:assembleRelease
       - name: Prepare APK artifacts
         env:
           TV_KEYSTORE_BASE64: ${{ secrets.ANDROID_TV_KEYSTORE_BASE64 }}
