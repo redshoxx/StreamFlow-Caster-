@@ -164,7 +164,7 @@ class _SettingsTile extends StatelessWidget {
         ),
         child: Icon(icon, color: colors.primary, size: 20),
       ),
-      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w650)),
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
       subtitle: Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis),
       trailing: onTap == null ? null : const Icon(Icons.chevron_right_rounded),
       onTap: onTap,
