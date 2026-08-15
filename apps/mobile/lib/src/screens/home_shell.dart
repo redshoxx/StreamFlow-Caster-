@@ -32,7 +32,7 @@ class _HomeShellState extends State<HomeShell> {
         final pages = <Widget>[
           BrowserScreen(controller: _controller),
           MediaScreen(controller: _controller),
-          const FilesScreen(),
+          FilesScreen(controller: _controller),
           DevicesScreen(controller: _controller),
         ];
 

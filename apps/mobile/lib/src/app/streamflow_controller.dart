@@ -5,6 +5,7 @@ import '../models/detected_media.dart';
 
 class StreamFlowController extends ChangeNotifier {
   final List<DetectedMedia> _detectedMedia = <DetectedMedia>[];
+  VoidCallback? _castCleanup;
 
   List<DetectedMedia> get detectedMedia => List.unmodifiable(_detectedMedia);
 
@@ -40,7 +41,13 @@ class StreamFlowController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void startCasting(CastDevice device, DetectedMedia media) {
+  void startCasting(
+    CastDevice device,
+    DetectedMedia media, {
+    VoidCallback? onEnd,
+  }) {
+    _castCleanup?.call();
+    _castCleanup = onEnd;
     _preferredDevice = device;
     _activeDevice = device;
     _activeMedia = media;
@@ -48,9 +55,18 @@ class StreamFlowController extends ChangeNotifier {
   }
 
   void endCasting() {
-    if (!isCasting) return;
+    if (!isCasting && _castCleanup == null) return;
+    _castCleanup?.call();
+    _castCleanup = null;
     _activeDevice = null;
     _activeMedia = null;
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _castCleanup?.call();
+    _castCleanup = null;
+    super.dispose();
   }
 }
