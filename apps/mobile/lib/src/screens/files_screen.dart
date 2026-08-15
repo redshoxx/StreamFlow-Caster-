@@ -28,17 +28,18 @@ class _FilesScreenState extends State<FilesScreen> {
   String? _error;
 
   Future<void> _pick() async {
-    final result = await FilePicker.platform.pickFiles(
+    final selected = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: const [
         'mp4', 'm4v', 'mov', 'webm', 'mkv', 'ts',
         'mp3', 'aac', 'm4a', 'flac', 'ogg', 'wav',
       ],
     );
-    if (!mounted || result == null || result.files.isEmpty) return;
+    if (!mounted || selected == null) return;
     await _server.stop();
+    if (!mounted) return;
     setState(() {
-      _selected = result.files.single;
+      _selected = selected;
       _error = null;
     });
   }
