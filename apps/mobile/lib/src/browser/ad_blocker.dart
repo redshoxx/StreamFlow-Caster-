@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class AdBlocker {
-  AdBlocker({SharedPreferencesAsync? preferences}) : _preferences = preferences;
+  AdBlocker([this._preferences]);
 
   static const _enabledKey = 'streamflow.adblock.enabled.v1';
 
