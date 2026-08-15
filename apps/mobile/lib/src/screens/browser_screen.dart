@@ -14,9 +14,14 @@ import 'cast_media_dialog.dart';
 import 'cast_remote_sheet.dart';
 
 class BrowserScreen extends StatefulWidget {
-  const BrowserScreen({super.key, required this.controller});
+  const BrowserScreen({
+    super.key,
+    required this.controller,
+    this.initialUri,
+  });
 
   final StreamFlowController controller;
+  final Uri? initialUri;
 
   @override
   State<BrowserScreen> createState() => _BrowserScreenState();
@@ -27,7 +32,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
   static const _maxPageMedia = 100;
 
   late final WebViewController _web;
-  final _address = TextEditingController(text: _homeUrl);
+  late final TextEditingController _address;
   final List<DetectedMedia> _pageMedia = <DetectedMedia>[];
   final _adBlocker = AdBlocker();
 
@@ -43,7 +48,9 @@ class _BrowserScreenState extends State<BrowserScreen> {
   @override
   void initState() {
     super.initState();
-    _currentUri = Uri.parse(_address.text);
+    final initialUri = widget.initialUri ?? Uri.parse(_homeUrl);
+    _address = TextEditingController(text: initialUri.toString());
+    _currentUri = initialUri;
 
     _web = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -88,7 +95,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
     if (enabled != _adBlockEnabled) {
       setState(() => _adBlockEnabled = enabled);
     }
-    await _web.loadRequest(Uri.parse(_homeUrl));
+    await _web.loadRequest(widget.initialUri ?? Uri.parse(_homeUrl));
   }
 
   void _onPageStarted(String url) {
