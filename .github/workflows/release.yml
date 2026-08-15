@@ -22,11 +22,17 @@ jobs:
       - run: flutter create --platforms=android --org com.redshoxx --project-name streamflow .
       - run: flutter pub get
       - run: flutter build apk --release
-      - run: cp build/app/outputs/flutter-apk/app-release.apk ../../StreamFlow-Mobile-release.apk
+      - name: Prepare mobile artifact
+        run: |
+          cp build/app/outputs/flutter-apk/app-release.apk ../../StreamFlow-Mobile-release.apk
+          cd ../..
+          sha256sum StreamFlow-Mobile-release.apk > StreamFlow-Mobile-release.apk.sha256
       - uses: actions/upload-artifact@v4
         with:
           name: mobile-apk
-          path: StreamFlow-Mobile-release.apk
+          path: |
+            StreamFlow-Mobile-release.apk
+            StreamFlow-Mobile-release.apk.sha256
           if-no-files-found: error
 
   tv:
@@ -43,8 +49,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "9.5.0"
-      - run: gradle :app:assembleRelease
-      - name: Sign Android TV release APK
+      - run: gradle :app:assembleDebug :app:assembleRelease
+      - name: Prepare Android TV artifacts
         env:
           TV_KEYSTORE_BASE64: ${{ secrets.ANDROID_TV_KEYSTORE_BASE64 }}
           TV_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_TV_KEYSTORE_PASSWORD }}
@@ -52,27 +58,42 @@ jobs:
           TV_KEY_PASSWORD: ${{ secrets.ANDROID_TV_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          if [ -z "${TV_KEYSTORE_BASE64:-}" ] || [ -z "${TV_KEYSTORE_PASSWORD:-}" ] || [ -z "${TV_KEY_ALIAS:-}" ] || [ -z "${TV_KEY_PASSWORD:-}" ]; then
-            echo "Android TV release signing secrets are missing. See docs/SIGNING.md."
+          cp app/build/outputs/apk/debug/app-debug.apk ../../StreamFlow-TV-test.apk
+
+          RELEASE_APK="$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' | head -n 1)"
+          if [ -z "$RELEASE_APK" ]; then
+            echo "No Android TV release APK was produced."
             exit 1
           fi
-          RELEASE_APK="$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' | head -n 1)"
-          echo "$TV_KEYSTORE_BASE64" | base64 --decode > /tmp/streamflow-tv.jks
-          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
-          "$APKSIGNER" sign \
-            --ks /tmp/streamflow-tv.jks \
-            --ks-key-alias "$TV_KEY_ALIAS" \
-            --ks-pass env:TV_KEYSTORE_PASSWORD \
-            --key-pass env:TV_KEY_PASSWORD \
-            --out ../../StreamFlow-TV-release.apk \
-            "$RELEASE_APK"
-          "$APKSIGNER" verify --verbose ../../StreamFlow-TV-release.apk
-          rm -f /tmp/streamflow-tv.jks
+          cp "$RELEASE_APK" ../../StreamFlow-TV-release-unsigned.apk
+
+          if [ -n "${TV_KEYSTORE_BASE64:-}" ] && [ -n "${TV_KEYSTORE_PASSWORD:-}" ] && [ -n "${TV_KEY_ALIAS:-}" ] && [ -n "${TV_KEY_PASSWORD:-}" ]; then
+            echo "$TV_KEYSTORE_BASE64" | base64 --decode > /tmp/streamflow-tv.jks
+            APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+            "$APKSIGNER" sign \
+              --ks /tmp/streamflow-tv.jks \
+              --ks-key-alias "$TV_KEY_ALIAS" \
+              --ks-pass env:TV_KEYSTORE_PASSWORD \
+              --key-pass env:TV_KEY_PASSWORD \
+              --out ../../StreamFlow-TV-release.apk \
+              ../../StreamFlow-TV-release-unsigned.apk
+            "$APKSIGNER" verify --verbose ../../StreamFlow-TV-release.apk
+            rm -f /tmp/streamflow-tv.jks
+          else
+            echo "TV signing secrets are not configured. Publishing test + unsigned release APKs."
+          fi
+
+          cd ../..
+          sha256sum StreamFlow-TV-*.apk > StreamFlow-TV.sha256
       - uses: actions/upload-artifact@v4
         with:
           name: tv-apk
-          path: StreamFlow-TV-release.apk
-          if-no-files-found: error
+          path: |
+            StreamFlow-TV-test.apk
+            StreamFlow-TV-release-unsigned.apk
+            StreamFlow-TV-release.apk
+            StreamFlow-TV.sha256
+          if-no-files-found: warn
 
   ios:
     runs-on: macos-latest
@@ -104,10 +125,13 @@ jobs:
           cd ../..
           /usr/bin/zip -qry StreamFlow-iOS-unsigned.ipa Payload
           rm -rf Payload
+          shasum -a 256 StreamFlow-iOS-unsigned.ipa > StreamFlow-iOS-unsigned.ipa.sha256
       - uses: actions/upload-artifact@v4
         with:
           name: ios-ipa
-          path: StreamFlow-iOS-unsigned.ipa
+          path: |
+            StreamFlow-iOS-unsigned.ipa
+            StreamFlow-iOS-unsigned.ipa.sha256
           if-no-files-found: error
 
   github-release:
@@ -121,6 +145,9 @@ jobs:
         with:
           files: |
             StreamFlow-Mobile-release.apk
-            StreamFlow-TV-release.apk
+            StreamFlow-Mobile-release.apk.sha256
+            StreamFlow-TV-*.apk
+            StreamFlow-TV.sha256
             StreamFlow-iOS-unsigned.ipa
+            StreamFlow-iOS-unsigned.ipa.sha256
           generate_release_notes: true
