@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0 - 2026-08-15
+
+- Added persistent browser history and favorites on Android and iOS.
+- Added a dedicated browser library with Favorite and History tabs.
+- Added one-tap bookmark controls in the browser header.
+- Added local history cleanup and individual entry removal.
+- Uses Flutter's modern `SharedPreferencesAsync` API instead of the legacy cached API.
+- Browser history is capped at 100 unique URLs and favorites at 100 entries.
+
 ## 0.3.0 - 2026-08-15
 
 - Added real local-file casting from Android and iOS to the StreamFlow Android TV receiver.

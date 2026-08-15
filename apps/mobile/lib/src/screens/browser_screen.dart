@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -5,6 +6,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import '../app/streamflow_controller.dart';
 import '../media/media_detector.dart';
+import '../models/browser_entry.dart';
 import '../models/cast_device.dart';
 import '../models/detected_media.dart';
 import 'cast_media_dialog.dart';
@@ -25,10 +27,12 @@ class _BrowserScreenState extends State<BrowserScreen> {
   final List<DetectedMedia> _pageMedia = <DetectedMedia>[];
   var _progress = 0;
   var _pageTitle = 'Browser';
+  Uri? _currentUri;
 
   @override
   void initState() {
     super.initState();
+    _currentUri = Uri.parse(_address.text);
     _web = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setNavigationDelegate(
@@ -40,6 +44,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
             if (!mounted) return;
             setState(() {
               _address.text = url;
+              _currentUri = Uri.tryParse(url);
               _progress = 0;
               _pageMedia.clear();
             });
@@ -48,12 +53,21 @@ class _BrowserScreenState extends State<BrowserScreen> {
             if (!mounted) return;
             _address.text = url;
             final title = await _web.getTitle();
-            if (mounted) {
-              setState(() {
-                _pageTitle = title?.trim().isNotEmpty == true ? title!.trim() : Uri.tryParse(url)?.host ?? 'Browser';
-                _progress = 100;
-              });
+            if (!mounted) return;
+
+            final resolvedTitle = title?.trim().isNotEmpty == true
+                ? title!.trim()
+                : Uri.tryParse(url)?.host ?? 'Browser';
+            final uri = Uri.tryParse(url);
+            setState(() {
+              _pageTitle = resolvedTitle;
+              _currentUri = uri;
+              _progress = 100;
+            });
+            if (uri != null) {
+              unawaited(widget.controller.recordVisit(uri, resolvedTitle));
             }
+
             await _scan();
             Future<void>.delayed(const Duration(seconds: 2), () async {
               if (mounted) await _scan();
@@ -114,6 +128,22 @@ class _BrowserScreenState extends State<BrowserScreen> {
 
   Future<void> _home() => _web.loadRequest(Uri.parse('https://www.google.com'));
 
+  Future<void> _toggleFavorite() async {
+    final uri = _currentUri;
+    if (uri == null) return;
+    final wasFavorite = widget.controller.isFavorite(uri);
+    await widget.controller.toggleFavorite(uri, _pageTitle);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(wasFavorite ? 'Aus Favoriten entfernt.' : 'Zu Favoriten hinzugefügt.')),
+    );
+  }
+
+  void _openBrowserEntry(BrowserEntry entry) {
+    Navigator.of(context).pop();
+    _web.loadRequest(entry.url);
+  }
+
   @override
   void dispose() {
     _address.dispose();
@@ -124,12 +154,13 @@ class _BrowserScreenState extends State<BrowserScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final favorite = widget.controller.isFavorite(_currentUri);
 
     return SafeArea(
       child: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+            padding: const EdgeInsets.fromLTRB(16, 10, 10, 8),
             child: Row(
               children: [
                 Expanded(
@@ -140,6 +171,16 @@ class _BrowserScreenState extends State<BrowserScreen> {
                       Text(_pageTitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall),
                     ],
                   ),
+                ),
+                IconButton(
+                  tooltip: favorite ? 'Favorit entfernen' : 'Favorit hinzufügen',
+                  onPressed: _currentUri == null ? null : _toggleFavorite,
+                  icon: Icon(favorite ? Icons.star_rounded : Icons.star_border_rounded),
+                ),
+                IconButton(
+                  tooltip: 'Favoriten und Verlauf',
+                  onPressed: () => _showLibrary(context),
+                  icon: const Icon(Icons.bookmarks_outlined),
                 ),
                 if (widget.controller.isCasting)
                   IconButton(
@@ -232,6 +273,22 @@ class _BrowserScreenState extends State<BrowserScreen> {
     );
   }
 
+  void _showLibrary(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      useSafeArea: true,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => FractionallySizedBox(
+        heightFactor: 0.78,
+        child: _BrowserLibrarySheet(
+          controller: widget.controller,
+          onOpen: _openBrowserEntry,
+        ),
+      ),
+    );
+  }
+
   void _showMedia(BuildContext context) {
     showModalBottomSheet<void>(
       context: context,
@@ -316,4 +373,131 @@ class _BrowserScreenState extends State<BrowserScreen> {
         MediaKind.audio => 'Audio',
         MediaKind.unknown => 'Medium',
       };
+}
+
+class _BrowserLibrarySheet extends StatelessWidget {
+  const _BrowserLibrarySheet({
+    required this.controller,
+    required this.onOpen,
+  });
+
+  final StreamFlowController controller;
+  final ValueChanged<BrowserEntry> onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    return DefaultTabController(
+      length: 2,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 12, 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Browser-Bibliothek',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                if (controller.history.isNotEmpty)
+                  TextButton(
+                    onPressed: () => unawaited(controller.clearHistory()),
+                    child: const Text('Verlauf löschen'),
+                  ),
+              ],
+            ),
+          ),
+          const TabBar(
+            tabs: [
+              Tab(icon: Icon(Icons.star_rounded), text: 'Favoriten'),
+              Tab(icon: Icon(Icons.history_rounded), text: 'Verlauf'),
+            ],
+          ),
+          Expanded(
+            child: AnimatedBuilder(
+              animation: controller,
+              builder: (context, _) {
+                if (!controller.browserLibraryLoaded) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                return TabBarView(
+                  children: [
+                    _BrowserEntryList(
+                      entries: controller.favorites,
+                      emptyIcon: Icons.star_border_rounded,
+                      emptyText: 'Noch keine Favoriten',
+                      onOpen: onOpen,
+                      onRemove: (entry) => unawaited(controller.removeFavorite(entry.url)),
+                    ),
+                    _BrowserEntryList(
+                      entries: controller.history,
+                      emptyIcon: Icons.history_toggle_off_rounded,
+                      emptyText: 'Noch kein Browserverlauf',
+                      onOpen: onOpen,
+                      onRemove: (entry) => unawaited(controller.removeHistoryEntry(entry.url)),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BrowserEntryList extends StatelessWidget {
+  const _BrowserEntryList({
+    required this.entries,
+    required this.emptyIcon,
+    required this.emptyText,
+    required this.onOpen,
+    required this.onRemove,
+  });
+
+  final List<BrowserEntry> entries;
+  final IconData emptyIcon;
+  final String emptyText;
+  final ValueChanged<BrowserEntry> onOpen;
+  final ValueChanged<BrowserEntry> onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    if (entries.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(emptyIcon, size: 44),
+            const SizedBox(height: 10),
+            Text(emptyText),
+          ],
+        ),
+      );
+    }
+
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
+      itemCount: entries.length,
+      separatorBuilder: (_, _) => const SizedBox(height: 6),
+      itemBuilder: (context, index) {
+        final entry = entries[index];
+        return Card(
+          child: ListTile(
+            leading: CircleAvatar(child: Text(entry.url.host.isEmpty ? '?' : entry.url.host[0].toUpperCase())),
+            title: Text(entry.displayTitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+            subtitle: Text(entry.url.host, maxLines: 1, overflow: TextOverflow.ellipsis),
+            onTap: () => onOpen(entry),
+            trailing: IconButton(
+              tooltip: 'Entfernen',
+              onPressed: () => onRemove(entry),
+              icon: const Icon(Icons.close_rounded),
+            ),
+          ),
+        );
+      },
+    );
+  }
 }
