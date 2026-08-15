@@ -3,8 +3,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class AdBlocker {
-  AdBlocker({SharedPreferencesAsync? preferences})
-      : _preferences = preferences ?? SharedPreferencesAsync();
+  AdBlocker({SharedPreferencesAsync? preferences}) : _preferences = preferences;
 
   static const _enabledKey = 'streamflow.adblock.enabled.v1';
 
@@ -30,13 +29,16 @@ class AdBlocker {
     'quantserve.com',
   ];
 
-  final SharedPreferencesAsync _preferences;
+  SharedPreferencesAsync? _preferences;
+
+  SharedPreferencesAsync get _prefs =>
+      _preferences ??= SharedPreferencesAsync();
 
   Future<bool> loadEnabled() async =>
-      await _preferences.getBool(_enabledKey) ?? true;
+      await _prefs.getBool(_enabledKey) ?? true;
 
   Future<void> saveEnabled(bool enabled) =>
-      _preferences.setBool(_enabledKey, enabled);
+      _prefs.setBool(_enabledKey, enabled);
 
   bool shouldBlockUrl(String rawUrl) {
     final uri = Uri.tryParse(rawUrl);
