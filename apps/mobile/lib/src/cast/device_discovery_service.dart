@@ -21,10 +21,7 @@ class DeviceDiscoveryService {
     _subscription = discovery.eventStream?.listen((event) async {
       switch (event) {
         case BonsoirDiscoveryServiceFoundEvent():
-          final service = event.service;
-          if (service != null) {
-            await service.resolve(discovery.serviceResolver);
-          }
+          await event.service.resolve(discovery.serviceResolver);
           break;
         case BonsoirDiscoveryServiceResolvedEvent():
           _upsert(event.service);
@@ -33,11 +30,8 @@ class DeviceDiscoveryService {
           _upsert(event.service);
           break;
         case BonsoirDiscoveryServiceLostEvent():
-          final service = event.service;
-          if (service != null) {
-            _devices.remove(service.name);
-            _emit();
-          }
+          _devices.remove(event.service.name);
+          _emit();
           break;
         default:
           break;
