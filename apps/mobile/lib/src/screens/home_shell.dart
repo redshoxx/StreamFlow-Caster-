@@ -19,8 +19,6 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   final _controller = StreamFlowController();
   var _pageIndex = 0;
-  var _browserEpoch = 0;
-  Uri? _browserLaunchUri;
 
   @override
   void dispose() {
@@ -28,15 +26,7 @@ class _HomeShellState extends State<HomeShell> {
     super.dispose();
   }
 
-  void _openBrowser(Uri? uri) {
-    setState(() {
-      if (uri != null) {
-        _browserLaunchUri = uri;
-        _browserEpoch += 1;
-      }
-      _pageIndex = 1;
-    });
-  }
+  void _openBrowser(Uri? _) => setState(() => _pageIndex = 1);
 
   void _openPage(int index) => setState(() => _pageIndex = index);
 
@@ -118,11 +108,7 @@ class _HomeShellState extends State<HomeShell> {
             onOpenDevices: () => _openPage(4),
             onOpenMedia: () => _openPage(2),
           ),
-          BrowserScreen(
-            key: ValueKey('browser-$_browserEpoch'),
-            controller: _controller,
-            initialUri: _browserLaunchUri,
-          ),
+          BrowserScreen(controller: _controller),
           MediaScreen(controller: _controller),
           FilesScreen(controller: _controller),
           DevicesScreen(controller: _controller),
@@ -286,7 +272,11 @@ class _NavButton extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.fade,
                 softWrap: false,
-                style: TextStyle(fontSize: 9.5, fontWeight: selected ? FontWeight.w700 : FontWeight.w500, color: color),
+                style: TextStyle(
+                  fontSize: 9.5,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  color: color,
+                ),
               ),
             ],
           ),
@@ -365,8 +355,18 @@ class _NowPlayingBar extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(media.displayName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)),
-                    Text('Auf ${device.name}', maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall),
+                    Text(
+                      media.displayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    Text(
+                      'Auf ${device.name}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
                   ],
                 ),
               ),
