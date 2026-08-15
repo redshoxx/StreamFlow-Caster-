@@ -1,0 +1,33 @@
+.DS_Store
+.idea/
+.vscode/
+*.iml
+*.log
+.env
+.env.*
+!.env.example
+
+# Flutter/Dart
+.dart_tool/
+.packages
+.pub-cache/
+build/
+apps/mobile/.flutter-plugins
+apps/mobile/.flutter-plugins-dependencies
+apps/mobile/android/.gradle/
+apps/mobile/ios/Pods/
+apps/mobile/ios/.symlinks/
+apps/mobile/ios/Flutter/ephemeral/
+
+# Android
+.gradle/
+local.properties
+**/captures/
+**/.cxx/
+**/build/
+
+# Signing
+*.jks
+*.keystore
+*.p12
+*.mobileprovision
