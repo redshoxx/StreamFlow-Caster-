@@ -44,11 +44,18 @@ abstract final class MediaDetector {
     seen.add(url);
     items.push({ url, type: type || '', label: label || document.title || '' });
   };
+
   document.querySelectorAll('video,audio').forEach((el) => {
     push(el.currentSrc || el.src, el.getAttribute('type'), el.getAttribute('title'));
     el.querySelectorAll('source').forEach((s) => push(s.src, s.type, s.getAttribute('title')));
   });
   document.querySelectorAll('source').forEach((s) => push(s.src, s.type, s.getAttribute('title')));
+  document.querySelectorAll('a[href]').forEach((a) => push(a.href, '', a.textContent));
+
+  try {
+    performance.getEntriesByType('resource').forEach((entry) => push(entry.name, '', document.title));
+  } catch (_) {}
+
   return JSON.stringify(items);
 })()
 ''';

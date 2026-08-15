@@ -3,12 +3,17 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../app/streamflow_controller.dart';
 import '../media/media_detector.dart';
+import '../models/cast_device.dart';
 import '../models/detected_media.dart';
 import 'cast_media_dialog.dart';
+import 'cast_remote_sheet.dart';
 
 class BrowserScreen extends StatefulWidget {
-  const BrowserScreen({super.key});
+  const BrowserScreen({super.key, required this.controller});
+
+  final StreamFlowController controller;
 
   @override
   State<BrowserScreen> createState() => _BrowserScreenState();
@@ -16,9 +21,10 @@ class BrowserScreen extends StatefulWidget {
 
 class _BrowserScreenState extends State<BrowserScreen> {
   late final WebViewController _web;
-  final _address = TextEditingController(text: 'https://example.com');
-  final List<DetectedMedia> _media = [];
+  final _address = TextEditingController(text: 'https://www.google.com');
+  final List<DetectedMedia> _pageMedia = <DetectedMedia>[];
   var _progress = 0;
+  var _pageTitle = 'Browser';
 
   @override
   void initState() {
@@ -27,8 +33,32 @@ class _BrowserScreenState extends State<BrowserScreen> {
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setNavigationDelegate(
         NavigationDelegate(
-          onProgress: (value) => setState(() => _progress = value),
-          onPageFinished: (_) => _scan(),
+          onProgress: (value) {
+            if (mounted) setState(() => _progress = value);
+          },
+          onPageStarted: (url) {
+            if (!mounted) return;
+            setState(() {
+              _address.text = url;
+              _progress = 0;
+              _pageMedia.clear();
+            });
+          },
+          onPageFinished: (url) async {
+            if (!mounted) return;
+            _address.text = url;
+            final title = await _web.getTitle();
+            if (mounted) {
+              setState(() {
+                _pageTitle = title?.trim().isNotEmpty == true ? title!.trim() : Uri.tryParse(url)?.host ?? 'Browser';
+                _progress = 100;
+              });
+            }
+            await _scan();
+            Future<void>.delayed(const Duration(seconds: 2), () async {
+              if (mounted) await _scan();
+            });
+          },
           onNavigationRequest: (request) {
             _capture(request.url);
             return NavigationDecision.navigate;
@@ -39,26 +69,31 @@ class _BrowserScreenState extends State<BrowserScreen> {
   }
 
   Future<void> _scan() async {
-    final raw = await _web.runJavaScriptReturningResult(MediaDetector.domScannerScript);
-    String json = raw.toString();
-    if (json.startsWith('"') && json.endsWith('"')) {
-      json = jsonDecode(json) as String;
-    }
-    final decoded = jsonDecode(json);
-    if (decoded is! List) return;
-    for (final item in decoded.whereType<Map>()) {
-      _capture(
-        item['url']?.toString() ?? '',
-        label: item['label']?.toString(),
-        mime: item['type']?.toString(),
-      );
+    try {
+      final raw = await _web.runJavaScriptReturningResult(MediaDetector.domScannerScript);
+      String json = raw.toString();
+      if (json.startsWith('"') && json.endsWith('"')) {
+        json = jsonDecode(json) as String;
+      }
+      final decoded = jsonDecode(json);
+      if (decoded is! List) return;
+      for (final item in decoded.whereType<Map>()) {
+        _capture(
+          item['url']?.toString() ?? '',
+          label: item['label']?.toString(),
+          mime: item['type']?.toString(),
+        );
+      }
+    } catch (_) {
+      // Some pages block injected JavaScript. Navigation interception still works.
     }
   }
 
   void _capture(String url, {String? label, String? mime}) {
     final candidate = MediaDetector.fromUrl(url, label: label, mime: mime);
-    if (candidate == null || _media.contains(candidate)) return;
-    setState(() => _media.add(candidate));
+    if (candidate == null || _pageMedia.contains(candidate)) return;
+    if (mounted) setState(() => _pageMedia.add(candidate));
+    widget.controller.addDetectedMedia(candidate);
   }
 
   void _go() {
@@ -71,8 +106,13 @@ class _BrowserScreenState extends State<BrowserScreen> {
       }
     }
     final uri = Uri.tryParse(value);
-    if (uri != null) _web.loadRequest(uri);
+    if (uri != null) {
+      FocusScope.of(context).unfocus();
+      _web.loadRequest(uri);
+    }
   }
+
+  Future<void> _home() => _web.loadRequest(Uri.parse('https://www.google.com'));
 
   @override
   void dispose() {
@@ -82,41 +122,111 @@ class _BrowserScreenState extends State<BrowserScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+
     return SafeArea(
       child: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
             child: Row(
               children: [
-                IconButton(onPressed: _web.goBack, icon: const Icon(Icons.arrow_back)),
                 Expanded(
-                  child: TextField(
-                    controller: _address,
-                    textInputAction: TextInputAction.go,
-                    onSubmitted: (_) => _go(),
-                    decoration: const InputDecoration(
-                      hintText: 'Suchen oder URL eingeben',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('StreamFlow', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+                      Text(_pageTitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall),
+                    ],
                   ),
                 ),
-                IconButton(onPressed: _go, icon: const Icon(Icons.arrow_forward)),
-                Badge(
-                  label: Text('${_media.length}'),
-                  isLabelVisible: _media.isNotEmpty,
-                  child: IconButton(
-                    tooltip: 'Gefundene Medien',
-                    onPressed: _media.isEmpty ? null : () => _showMedia(context),
-                    icon: const Icon(Icons.video_collection_outlined),
+                if (widget.controller.isCasting)
+                  IconButton(
+                    tooltip: 'Wiedergabe steuern',
+                    onPressed: () => showCastRemoteSheet(context, widget.controller),
+                    icon: Icon(Icons.cast_connected, color: colors.primary),
+                  )
+                else
+                  IconButton(
+                    tooltip: 'Cast',
+                    onPressed: _pageMedia.isEmpty ? null : () => _showMedia(context),
+                    icon: const Icon(Icons.cast_outlined),
                   ),
-                ),
               ],
             ),
           ),
-          if (_progress < 100) LinearProgressIndicator(value: _progress / 100),
-          Expanded(child: WebViewWidget(controller: _web)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            child: Container(
+              decoration: BoxDecoration(
+                color: colors.surfaceContainerHigh,
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: Row(
+                children: [
+                  const SizedBox(width: 12),
+                  Icon(Icons.lock_outline, size: 17, color: colors.onSurfaceVariant),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextField(
+                      controller: _address,
+                      textInputAction: TextInputAction.go,
+                      keyboardType: TextInputType.url,
+                      autocorrect: false,
+                      enableSuggestions: false,
+                      onSubmitted: (_) => _go(),
+                      decoration: const InputDecoration(
+                        hintText: 'Suchen oder URL eingeben',
+                        border: InputBorder.none,
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(vertical: 13),
+                      ),
+                    ),
+                  ),
+                  IconButton(onPressed: _go, icon: const Icon(Icons.arrow_forward_rounded)),
+                ],
+              ),
+            ),
+          ),
+          if (_progress < 100)
+            LinearProgressIndicator(value: _progress <= 0 ? null : _progress / 100, minHeight: 2),
+          Expanded(
+            child: Stack(
+              children: [
+                Positioned.fill(child: WebViewWidget(controller: _web)),
+                if (_pageMedia.isNotEmpty)
+                  Positioned(
+                    right: 14,
+                    bottom: 14,
+                    child: FilledButton.icon(
+                      onPressed: () => _showMedia(context),
+                      icon: Badge(
+                        label: Text('${_pageMedia.length}'),
+                        child: const Icon(Icons.video_collection_outlined),
+                      ),
+                      label: Text('${_pageMedia.length} Medien'),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          Material(
+            color: colors.surface,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  IconButton(tooltip: 'Zurück', onPressed: () => _web.goBack(), icon: const Icon(Icons.arrow_back_ios_new_rounded)),
+                  IconButton(tooltip: 'Vor', onPressed: () => _web.goForward(), icon: const Icon(Icons.arrow_forward_ios_rounded)),
+                  IconButton(tooltip: 'Startseite', onPressed: _home, icon: const Icon(Icons.home_outlined)),
+                  IconButton(tooltip: 'Neu laden', onPressed: () => _web.reload(), icon: const Icon(Icons.refresh_rounded)),
+                  IconButton(tooltip: 'Medien suchen', onPressed: _scan, icon: const Icon(Icons.manage_search_rounded)),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -125,31 +235,85 @@ class _BrowserScreenState extends State<BrowserScreen> {
   void _showMedia(BuildContext context) {
     showModalBottomSheet<void>(
       context: context,
+      useSafeArea: true,
       showDragHandle: true,
-      builder: (context) => ListView.separated(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-        itemCount: _media.length,
-        separatorBuilder: (_, _) => const Divider(height: 1),
-        itemBuilder: (context, index) {
-          final item = _media[index];
-          return ListTile(
-            leading: const Icon(Icons.play_circle_outline),
-            title: Text(item.displayName, maxLines: 1, overflow: TextOverflow.ellipsis),
-            subtitle: Text('${item.kind.name.toUpperCase()} • ${item.url.host}'),
-            onTap: () async {
-              Navigator.of(context).pop();
-              final device = await showDialog<Object?>(
-                context: this.context,
-                builder: (_) => CastMediaDialog(media: item),
-              );
-              if (!mounted || device == null) return;
-              ScaffoldMessenger.of(this.context).showSnackBar(
-                const SnackBar(content: Text('Wiedergabe an den Fernseher gesendet.')),
-              );
-            },
-          );
-        },
+      isScrollControlled: true,
+      builder: (sheetContext) => FractionallySizedBox(
+        heightFactor: 0.72,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 12, 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Gefundene Medien', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+                        Text('${_pageMedia.length} Quellen auf dieser Seite', style: Theme.of(context).textTheme.bodySmall),
+                      ],
+                    ),
+                  ),
+                  IconButton(onPressed: _scan, icon: const Icon(Icons.refresh)),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: ListView.separated(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+                itemCount: _pageMedia.length,
+                separatorBuilder: (_, _) => const SizedBox(height: 6),
+                itemBuilder: (context, index) {
+                  final item = _pageMedia[index];
+                  return Card(
+                    child: ListTile(
+                      leading: CircleAvatar(child: Icon(_mediaIcon(item.kind))),
+                      title: Text(item.displayName, maxLines: 1, overflow: TextOverflow.ellipsis),
+                      subtitle: Text('${_mediaLabel(item.kind)} • ${item.url.host}', maxLines: 1, overflow: TextOverflow.ellipsis),
+                      trailing: const Icon(Icons.cast_outlined),
+                      onTap: () async {
+                        Navigator.of(sheetContext).pop();
+                        await _cast(item);
+                      },
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
+
+  Future<void> _cast(DetectedMedia item) async {
+    final device = await showDialog<CastDevice>(
+      context: context,
+      builder: (_) => CastMediaDialog(
+        media: item,
+        preferredDeviceId: widget.controller.preferredDevice?.id,
+      ),
+    );
+    if (!mounted || device == null) return;
+    widget.controller.startCasting(device, item);
+    await showCastRemoteSheet(context, widget.controller);
+  }
+
+  IconData _mediaIcon(MediaKind kind) => switch (kind) {
+        MediaKind.audio => Icons.music_note_rounded,
+        MediaKind.hls => Icons.stream_rounded,
+        MediaKind.dash => Icons.hub_outlined,
+        MediaKind.video => Icons.movie_outlined,
+        MediaKind.unknown => Icons.insert_drive_file_outlined,
+      };
+
+  String _mediaLabel(MediaKind kind) => switch (kind) {
+        MediaKind.hls => 'HLS',
+        MediaKind.dash => 'DASH',
+        MediaKind.video => 'Video',
+        MediaKind.audio => 'Audio',
+        MediaKind.unknown => 'Medium',
+      };
 }

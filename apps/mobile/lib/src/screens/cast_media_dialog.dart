@@ -8,9 +8,14 @@ import '../models/cast_device.dart';
 import '../models/detected_media.dart';
 
 class CastMediaDialog extends StatefulWidget {
-  const CastMediaDialog({super.key, required this.media});
+  const CastMediaDialog({
+    super.key,
+    required this.media,
+    this.preferredDeviceId,
+  });
 
   final DetectedMedia media;
+  final String? preferredDeviceId;
 
   @override
   State<CastMediaDialog> createState() => _CastMediaDialogState();
@@ -28,7 +33,16 @@ class _CastMediaDialogState extends State<CastMediaDialog> {
   void initState() {
     super.initState();
     _subscription = _discovery.devices.listen((devices) {
-      if (mounted) setState(() => _devices = devices);
+      final sorted = [...devices];
+      final preferred = widget.preferredDeviceId;
+      if (preferred != null) {
+        sorted.sort((a, b) {
+          if (a.id == preferred) return -1;
+          if (b.id == preferred) return 1;
+          return a.name.compareTo(b.name);
+        });
+      }
+      if (mounted) setState(() => _devices = sorted);
     });
     _start();
   }
@@ -70,16 +84,20 @@ class _CastMediaDialogState extends State<CastMediaDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Auf Gerät abspielen'),
+      icon: const Icon(Icons.cast_rounded),
+      title: const Text('Auf Fernseher abspielen'),
       content: SizedBox(
         width: 420,
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Text(widget.media.displayName, maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center),
+            const SizedBox(height: 12),
             if (_error != null)
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),
-                child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error), textAlign: TextAlign.center),
               ),
             if (_devices.isEmpty)
               const Padding(
@@ -94,15 +112,17 @@ class _CastMediaDialogState extends State<CastMediaDialog> {
               )
             else
               ..._devices.map(
-                (device) => ListTile(
-                  leading: const Icon(Icons.tv),
-                  title: Text(device.name),
-                  subtitle: Text(device.host),
-                  trailing: _connectingId == device.id
-                      ? const SizedBox.square(dimension: 22, child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Icon(Icons.play_arrow),
-                  enabled: _connectingId == null,
-                  onTap: () => _cast(device),
+                (device) => Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.tv_rounded),
+                    title: Text(device.name),
+                    subtitle: Text(device.id == widget.preferredDeviceId ? 'Bevorzugtes Gerät' : device.host),
+                    trailing: _connectingId == device.id
+                        ? const SizedBox.square(dimension: 22, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.play_arrow_rounded),
+                    enabled: _connectingId == null,
+                    onTap: () => _cast(device),
+                  ),
                 ),
               ),
           ],

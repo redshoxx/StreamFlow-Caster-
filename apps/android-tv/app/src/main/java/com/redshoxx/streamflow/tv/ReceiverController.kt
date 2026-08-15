@@ -16,6 +16,7 @@ class ReceiverController(context: Context) {
         val positionMs: Long = 0,
         val durationMs: Long = 0,
         val playbackState: Int = Player.STATE_IDLE,
+        val volume: Float = 1f,
     )
 
     private val player = ExoPlayer.Builder(context).build()
@@ -44,6 +45,7 @@ class ReceiverController(context: Context) {
     fun pause() { player.pause(); publish() }
     fun stop() { player.stop(); publish() }
     fun seek(positionMs: Long) { player.seekTo(positionMs.coerceAtLeast(0)); publish() }
+    fun setVolume(volume: Float) { player.volume = volume.coerceIn(0f, 1f); publish() }
 
     fun snapshot(): UiState {
         publish()
@@ -56,6 +58,7 @@ class ReceiverController(context: Context) {
             positionMs = player.currentPosition.coerceAtLeast(0),
             durationMs = player.duration.coerceAtLeast(0),
             playbackState = player.playbackState,
+            volume = player.volume,
         )
     }
 

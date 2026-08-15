@@ -20,6 +20,8 @@ class ReceiverClient {
   Future<void> stop(CastDevice device) => _post(device, '/api/v1/stop', const {});
   Future<void> seek(CastDevice device, Duration position) =>
       _post(device, '/api/v1/seek', {'positionMs': position.inMilliseconds});
+  Future<void> setVolume(CastDevice device, double volume) =>
+      _post(device, '/api/v1/volume', {'volume': volume.clamp(0.0, 1.0)});
 
   Future<Map<String, dynamic>> status(CastDevice device) async {
     final response = await _client

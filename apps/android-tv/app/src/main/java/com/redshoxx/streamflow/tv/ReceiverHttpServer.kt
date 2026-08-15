@@ -28,6 +28,10 @@ class ReceiverHttpServer(
                     val position = bodyJson(session).optLong("positionMs", 0)
                     ok { controller.seek(position) }
                 }
+                session.method == Method.POST && session.uri == "/api/v1/volume" -> {
+                    val volume = bodyJson(session).optDouble("volume", 1.0).toFloat()
+                    ok { controller.setVolume(volume) }
+                }
                 else -> json(404, JSONObject().put("error", "not_found"))
             }
         } catch (e: Exception) {
@@ -43,7 +47,8 @@ class ReceiverHttpServer(
             .put("isPlaying", state.isPlaying)
             .put("positionMs", state.positionMs)
             .put("durationMs", state.durationMs)
-            .put("playbackState", state.playbackState))
+            .put("playbackState", state.playbackState)
+            .put("volume", state.volume))
     }
 
     private fun bodyJson(session: IHTTPSession): JSONObject {
