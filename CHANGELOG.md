@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0 - 2026-08-15
+
+- Added a built-in ad and tracker blocker to the Android/iOS browser.
+- Ad blocking is enabled by default and the preference persists across app restarts.
+- Added host-based blocking for common advertising and tracking networks.
+- Added cosmetic DOM cleanup for common ad containers, ad iframes and injected ad elements.
+- Added blocking hooks for popup windows, `fetch`, XHR and `sendBeacon` requests inside loaded pages.
+- Added an in-browser shield control and live blocked-item counter.
+- Ad/tracker URLs are excluded from the detected-media list so they are not offered as castable media.
+- Added unit tests for ad-host matching.
+
 ## 0.4.0 - 2026-08-15
 
 - Added persistent browser history and favorites on Android and iOS.
