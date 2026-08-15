@@ -66,7 +66,7 @@ class _MediaScreenState extends State<MediaScreen> {
                 padding: const EdgeInsets.all(28),
                 child: Column(
                   children: [
-                    const Icon(Icons.video_search_outlined, size: 46),
+                    const Icon(Icons.video_library_outlined, size: 46),
                     const SizedBox(height: 12),
                     Text('Noch keine Medien erkannt', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
                     const SizedBox(height: 6),
@@ -81,9 +81,10 @@ class _MediaScreenState extends State<MediaScreen> {
                 item: item,
                 onCast: () => _cast(item),
                 onCopy: () async {
+                  final messenger = ScaffoldMessenger.of(context);
                   await Clipboard.setData(ClipboardData(text: item.url.toString()));
                   if (!mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Medien-URL kopiert.')));
+                  messenger.showSnackBar(const SnackBar(content: Text('Medien-URL kopiert.')));
                 },
                 onRemove: () => widget.controller.removeDetectedMedia(item),
               ),
