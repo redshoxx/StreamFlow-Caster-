@@ -11,6 +11,7 @@ on:
 jobs:
   apk:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: apps/android-tv
@@ -23,8 +24,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "9.5.0"
-      - name: Build test and release APKs
-        run: gradle :app:assembleDebug :app:assembleRelease
+      - name: Lint and build test/release APKs
+        run: gradle --no-daemon :app:lintRelease :app:assembleDebug :app:assembleRelease
       - name: Prepare APK artifacts
         env:
           TV_KEYSTORE_BASE64: ${{ secrets.ANDROID_TV_KEYSTORE_BASE64 }}
@@ -53,7 +54,7 @@ jobs:
               --key-pass env:TV_KEY_PASSWORD \
               --out ../../dist/StreamFlow-TV-release.apk \
               ../../dist/StreamFlow-TV-release-unsigned.apk
-            "$APKSIGNER" verify --verbose ../../dist/StreamFlow-TV-release.apk
+            "$APKSIGNER" verify --verbose --print-certs ../../dist/StreamFlow-TV-release.apk
             rm -f /tmp/streamflow-tv.jks
           else
             echo "Android TV signing secrets are not configured; producing unsigned release + installable test APK."

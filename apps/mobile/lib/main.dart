@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'src/screens/home_shell.dart';
 import 'src/theme/app_theme.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const ProviderScope(child: StreamFlowApp()));
+  runApp(const StreamFlowApp());
 }
 
 class StreamFlowApp extends StatelessWidget {

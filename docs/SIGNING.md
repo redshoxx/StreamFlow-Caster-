@@ -1,21 +1,40 @@
-# Android TV release signing
+# Android production signing
 
-StreamFlow's Android TV release APK must be signed with one stable private key so later versions can update the installed app.
+StreamFlow uses separate stable signing keys for the Android smartphone app and the Android TV receiver. Keep both original keystores permanently and never commit keystores or passwords to Git.
 
-Do not commit the keystore or passwords to the repository.
+A tagged GitHub release is intentionally blocked until both Android applications can be production-signed. Branch builds remain available for testing.
 
-## Required GitHub Actions secrets
+## Mobile app secrets
 
-Create these repository secrets under **Settings → Secrets and variables → Actions**:
+Configure under **Settings → Secrets and variables → Actions**:
 
-- `ANDROID_TV_KEYSTORE_BASE64` — Base64 encoded JKS/keystore file
-- `ANDROID_TV_KEYSTORE_PASSWORD` — keystore password
-- `ANDROID_TV_KEY_ALIAS` — signing key alias
-- `ANDROID_TV_KEY_PASSWORD` — key password
+- `ANDROID_MOBILE_KEYSTORE_BASE64`
+- `ANDROID_MOBILE_KEYSTORE_PASSWORD`
+- `ANDROID_MOBILE_KEY_ALIAS`
+- `ANDROID_MOBILE_KEY_PASSWORD`
 
-## Generate a release keystore
+Example keystore creation:
 
-Run this once on a trusted computer and keep the resulting file backed up securely:
+```bash
+keytool -genkeypair \
+  -v \
+  -keystore streamflow-mobile-release.jks \
+  -alias streamflow-mobile \
+  -keyalg RSA \
+  -keysize 4096 \
+  -validity 10000
+```
+
+## Android TV secrets
+
+Configure:
+
+- `ANDROID_TV_KEYSTORE_BASE64`
+- `ANDROID_TV_KEYSTORE_PASSWORD`
+- `ANDROID_TV_KEY_ALIAS`
+- `ANDROID_TV_KEY_PASSWORD`
+
+Example:
 
 ```bash
 keytool -genkeypair \
@@ -27,32 +46,28 @@ keytool -genkeypair \
   -validity 10000
 ```
 
-Encode it for the GitHub secret:
+## Encode a keystore
 
-### macOS / Linux
+macOS / Linux:
 
 ```bash
-base64 < streamflow-tv-release.jks | tr -d '\n'
+base64 < streamflow-mobile-release.jks | tr -d '\n'
 ```
 
-### PowerShell
+PowerShell:
 
 ```powershell
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("streamflow-tv-release.jks"))
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("streamflow-mobile-release.jks"))
 ```
 
-Store the Base64 output as `ANDROID_TV_KEYSTORE_BASE64`.
+Use the resulting Base64 value for the corresponding `*_KEYSTORE_BASE64` secret.
 
 ## CI behavior
 
-The branch workflow builds:
+Branch workflows always build installable test artifacts. When the matching four secrets exist, they additionally produce and verify the production-signed APK.
 
-- `StreamFlow-TV-test.apk` — installable debug-signed test build
-- `StreamFlow-TV-release-unsigned.apk` — optimized but not installable as the final production release
-- `StreamFlow-TV-release.apk` — produced only when all four signing secrets exist
+The tag workflow is stricter: it exits with an error if either production signing configuration is missing. A public GitHub release therefore cannot accidentally publish an Android APK with a temporary or unstable signing identity.
 
-The tag release workflow intentionally fails the Android TV release job when signing secrets are missing. This prevents publishing an unsigned or unstable-signature production APK.
+## Key continuity
 
-## Important
-
-Keep the original keystore permanently. If it is lost, a future APK signed with a different key cannot update an existing installation with the same application ID.
+An installed Android application can normally be updated only by an APK signed by the same accepted signing identity. Back up each release keystore and its passwords in an offline secure location before publishing the first production version.

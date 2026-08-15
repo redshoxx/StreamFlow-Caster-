@@ -10,16 +10,19 @@ import '../storage/browser_library_store.dart';
 class StreamFlowController extends ChangeNotifier {
   StreamFlowController({BrowserLibraryStore? browserLibraryStore})
       : _browserLibraryStore = browserLibraryStore ?? BrowserLibraryStore() {
-    unawaited(_loadBrowserLibrary());
+    _browserLibraryReady = _loadBrowserLibrary();
   }
 
   static const _maxHistoryEntries = 100;
   static const _maxFavoriteEntries = 100;
+  static const _maxDetectedMediaEntries = 200;
 
   final BrowserLibraryStore _browserLibraryStore;
   final List<DetectedMedia> _detectedMedia = <DetectedMedia>[];
   final List<BrowserEntry> _history = <BrowserEntry>[];
   final List<BrowserEntry> _favorites = <BrowserEntry>[];
+  late final Future<void> _browserLibraryReady;
+  Future<void> _storageWriteQueue = Future<void>.value();
   VoidCallback? _castCleanup;
   bool _browserLibraryLoaded = false;
   bool _disposed = false;
@@ -38,7 +41,11 @@ class StreamFlowController extends ChangeNotifier {
   DetectedMedia? _activeMedia;
   DetectedMedia? get activeMedia => _activeMedia;
 
-  bool get isCasting => _activeDevice != null && _activeMedia != null;
+  String? _activePairingCode;
+  String? get activePairingCode => _activePairingCode;
+
+  bool get isCasting =>
+      _activeDevice != null && _activeMedia != null && _activePairingCode != null;
 
   Future<void> _loadBrowserLibrary() async {
     try {
@@ -63,6 +70,9 @@ class StreamFlowController extends ChangeNotifier {
   void addDetectedMedia(DetectedMedia media) {
     if (_detectedMedia.contains(media)) return;
     _detectedMedia.insert(0, media);
+    if (_detectedMedia.length > _maxDetectedMediaEntries) {
+      _detectedMedia.removeRange(_maxDetectedMediaEntries, _detectedMedia.length);
+    }
     notifyListeners();
   }
 
@@ -78,6 +88,8 @@ class StreamFlowController extends ChangeNotifier {
 
   Future<void> recordVisit(Uri url, String title) async {
     if (!_supportedBrowserUri(url)) return;
+    await _browserLibraryReady;
+    if (_disposed) return;
 
     _history.removeWhere((entry) => _sameUrl(entry.url, url));
     _history.insert(
@@ -88,7 +100,7 @@ class StreamFlowController extends ChangeNotifier {
       _history.removeRange(_maxHistoryEntries, _history.length);
     }
     notifyListeners();
-    await _browserLibraryStore.saveHistory(_history);
+    await _enqueueStorageWrite(() => _browserLibraryStore.saveHistory(_history));
   }
 
   bool isFavorite(Uri? url) {
@@ -98,6 +110,8 @@ class StreamFlowController extends ChangeNotifier {
 
   Future<void> toggleFavorite(Uri url, String title) async {
     if (!_supportedBrowserUri(url)) return;
+    await _browserLibraryReady;
+    if (_disposed) return;
 
     final index = _favorites.indexWhere((entry) => _sameUrl(entry.url, url));
     if (index >= 0) {
@@ -112,33 +126,56 @@ class StreamFlowController extends ChangeNotifier {
       }
     }
     notifyListeners();
-    await _browserLibraryStore.saveFavorites(_favorites);
+    await _enqueueStorageWrite(() => _browserLibraryStore.saveFavorites(_favorites));
   }
 
   Future<void> removeFavorite(Uri url) async {
+    await _browserLibraryReady;
+    if (_disposed) return;
+
     final before = _favorites.length;
     _favorites.removeWhere((entry) => _sameUrl(entry.url, url));
     if (_favorites.length == before) return;
     notifyListeners();
-    await _browserLibraryStore.saveFavorites(_favorites);
+    await _enqueueStorageWrite(() => _browserLibraryStore.saveFavorites(_favorites));
   }
 
   Future<void> removeHistoryEntry(Uri url) async {
+    await _browserLibraryReady;
+    if (_disposed) return;
+
     final before = _history.length;
     _history.removeWhere((entry) => _sameUrl(entry.url, url));
     if (_history.length == before) return;
     notifyListeners();
-    await _browserLibraryStore.saveHistory(_history);
+    await _enqueueStorageWrite(() => _browserLibraryStore.saveHistory(_history));
   }
 
   Future<void> clearHistory() async {
-    if (_history.isEmpty) return;
+    await _browserLibraryReady;
+    if (_disposed || _history.isEmpty) return;
     _history.clear();
     notifyListeners();
-    await _browserLibraryStore.saveHistory(_history);
+    await _enqueueStorageWrite(() => _browserLibraryStore.saveHistory(_history));
+  }
+
+  Future<void> _enqueueStorageWrite(Future<void> Function() write) {
+    _storageWriteQueue = _storageWriteQueue.then((_) async {
+      try {
+        await write();
+      } catch (_) {
+        // Local persistence errors must not interrupt the active browsing session.
+      }
+    });
+    return _storageWriteQueue;
   }
 
   void setPreferredDevice(CastDevice device) {
+    if (_preferredDevice?.id == device.id &&
+        _preferredDevice?.host == device.host &&
+        _preferredDevice?.port == device.port) {
+      return;
+    }
     _preferredDevice = device;
     notifyListeners();
   }
@@ -146,6 +183,7 @@ class StreamFlowController extends ChangeNotifier {
   void startCasting(
     CastDevice device,
     DetectedMedia media, {
+    required String pairingCode,
     VoidCallback? onEnd,
   }) {
     _castCleanup?.call();
@@ -153,6 +191,7 @@ class StreamFlowController extends ChangeNotifier {
     _preferredDevice = device;
     _activeDevice = device;
     _activeMedia = media;
+    _activePairingCode = pairingCode;
     notifyListeners();
   }
 
@@ -162,18 +201,21 @@ class StreamFlowController extends ChangeNotifier {
     _castCleanup = null;
     _activeDevice = null;
     _activeMedia = null;
+    _activePairingCode = null;
     notifyListeners();
   }
 
   bool _sameUrl(Uri a, Uri b) => a.toString() == b.toString();
 
-  bool _supportedBrowserUri(Uri uri) => uri.scheme == 'http' || uri.scheme == 'https';
+  bool _supportedBrowserUri(Uri uri) =>
+      uri.scheme == 'http' || uri.scheme == 'https';
 
   @override
   void dispose() {
     _disposed = true;
     _castCleanup?.call();
     _castCleanup = null;
+    _activePairingCode = null;
     super.dispose();
   }
 }

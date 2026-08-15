@@ -22,7 +22,9 @@ class _MediaScreenState extends State<MediaScreen> {
   @override
   Widget build(BuildContext context) {
     final all = widget.controller.detectedMedia;
-    final visible = _filter == null ? all : all.where((item) => item.kind == _filter).toList();
+    final visible = _filter == null
+        ? all
+        : all.where((item) => item.kind == _filter).toList(growable: false);
 
     return SafeArea(
       child: ListView(
@@ -34,8 +36,16 @@ class _MediaScreenState extends State<MediaScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Medien', style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w700)),
-                    Text('${all.length} erkannte Quellen', style: Theme.of(context).textTheme.bodyMedium),
+                    Text(
+                      'Medien',
+                      style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                    ),
+                    Text(
+                      '${all.length} erkannte Quellen',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
                   ],
                 ),
               ),
@@ -51,11 +61,31 @@ class _MediaScreenState extends State<MediaScreen> {
             scrollDirection: Axis.horizontal,
             child: Row(
               children: [
-                _FilterChip(label: 'Alle', selected: _filter == null, onTap: () => setState(() => _filter = null)),
-                _FilterChip(label: 'Video', selected: _filter == MediaKind.video, onTap: () => setState(() => _filter = MediaKind.video)),
-                _FilterChip(label: 'HLS', selected: _filter == MediaKind.hls, onTap: () => setState(() => _filter = MediaKind.hls)),
-                _FilterChip(label: 'DASH', selected: _filter == MediaKind.dash, onTap: () => setState(() => _filter = MediaKind.dash)),
-                _FilterChip(label: 'Audio', selected: _filter == MediaKind.audio, onTap: () => setState(() => _filter = MediaKind.audio)),
+                _FilterChip(
+                  label: 'Alle',
+                  selected: _filter == null,
+                  onTap: () => setState(() => _filter = null),
+                ),
+                _FilterChip(
+                  label: 'Video',
+                  selected: _filter == MediaKind.video,
+                  onTap: () => setState(() => _filter = MediaKind.video),
+                ),
+                _FilterChip(
+                  label: 'HLS',
+                  selected: _filter == MediaKind.hls,
+                  onTap: () => setState(() => _filter = MediaKind.hls),
+                ),
+                _FilterChip(
+                  label: 'DASH',
+                  selected: _filter == MediaKind.dash,
+                  onTap: () => setState(() => _filter = MediaKind.dash),
+                ),
+                _FilterChip(
+                  label: 'Audio',
+                  selected: _filter == MediaKind.audio,
+                  onTap: () => setState(() => _filter = MediaKind.audio),
+                ),
               ],
             ),
           ),
@@ -68,9 +98,17 @@ class _MediaScreenState extends State<MediaScreen> {
                   children: [
                     const Icon(Icons.video_library_outlined, size: 46),
                     const SizedBox(height: 12),
-                    Text('Noch keine Medien erkannt', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+                    Text(
+                      'Noch keine Medien erkannt',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
                     const SizedBox(height: 6),
-                    const Text('Öffne im Browser eine Seite mit einem unterstützten Video-, HLS- oder Audio-Stream.', textAlign: TextAlign.center),
+                    const Text(
+                      'Öffne im Browser eine Seite mit einem unterstützten Video-, HLS- oder Audio-Stream.',
+                      textAlign: TextAlign.center,
+                    ),
                   ],
                 ),
               ),
@@ -82,9 +120,13 @@ class _MediaScreenState extends State<MediaScreen> {
                 onCast: () => _cast(item),
                 onCopy: () async {
                   final messenger = ScaffoldMessenger.of(context);
-                  await Clipboard.setData(ClipboardData(text: item.url.toString()));
+                  await Clipboard.setData(
+                    ClipboardData(text: item.url.toString()),
+                  );
                   if (!mounted) return;
-                  messenger.showSnackBar(const SnackBar(content: Text('Medien-URL kopiert.')));
+                  messenger.showSnackBar(
+                    const SnackBar(content: Text('Medien-URL kopiert.')),
+                  );
                 },
                 onRemove: () => widget.controller.removeDetectedMedia(item),
               ),
@@ -96,21 +138,29 @@ class _MediaScreenState extends State<MediaScreen> {
   }
 
   Future<void> _cast(DetectedMedia item) async {
-    final device = await showDialog<CastDevice>(
+    final target = await showDialog<CastTarget>(
       context: context,
       builder: (_) => CastMediaDialog(
         media: item,
         preferredDeviceId: widget.controller.preferredDevice?.id,
       ),
     );
-    if (!mounted || device == null) return;
-    widget.controller.startCasting(device, item);
+    if (!mounted || target == null) return;
+    widget.controller.startCasting(
+      target.device,
+      item,
+      pairingCode: target.pairingCode,
+    );
     await showCastRemoteSheet(context, widget.controller);
   }
 }
 
 class _FilterChip extends StatelessWidget {
-  const _FilterChip({required this.label, required this.selected, required this.onTap});
+  const _FilterChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
 
   final String label;
   final bool selected;
@@ -120,13 +170,22 @@ class _FilterChip extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(right: 8),
-      child: FilterChip(label: Text(label), selected: selected, onSelected: (_) => onTap()),
+      child: FilterChip(
+        label: Text(label),
+        selected: selected,
+        onSelected: (_) => onTap(),
+      ),
     );
   }
 }
 
 class _MediaCard extends StatelessWidget {
-  const _MediaCard({required this.item, required this.onCast, required this.onCopy, required this.onRemove});
+  const _MediaCard({
+    required this.item,
+    required this.onCast,
+    required this.onCopy,
+    required this.onRemove,
+  });
 
   final DetectedMedia item;
   final VoidCallback onCast;
@@ -144,7 +203,10 @@ class _MediaCard extends StatelessWidget {
             Container(
               width: 48,
               height: 48,
-              decoration: BoxDecoration(color: colors.primaryContainer, borderRadius: BorderRadius.circular(14)),
+              decoration: BoxDecoration(
+                color: colors.primaryContainer,
+                borderRadius: BorderRadius.circular(14),
+              ),
               child: Icon(_icon(item.kind), color: colors.onPrimaryContainer),
             ),
             const SizedBox(width: 12),
@@ -152,13 +214,27 @@ class _MediaCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(item.displayName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600)),
+                  Text(
+                    item.displayName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
                   const SizedBox(height: 3),
-                  Text('${_label(item.kind)} • ${item.url.host}', maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall),
+                  Text(
+                    '${_label(item.kind)} • ${item.url.host}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
                 ],
               ),
             ),
-            IconButton(onPressed: onCast, tooltip: 'Abspielen', icon: const Icon(Icons.cast_outlined)),
+            IconButton(
+              onPressed: onCast,
+              tooltip: 'Abspielen',
+              icon: const Icon(Icons.cast_outlined),
+            ),
             PopupMenuButton<String>(
               onSelected: (value) {
                 if (value == 'copy') onCopy();

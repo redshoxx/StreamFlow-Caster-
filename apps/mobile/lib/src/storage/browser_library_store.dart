@@ -15,18 +15,20 @@ class BrowserLibrarySnapshot {
 }
 
 class BrowserLibraryStore {
-  BrowserLibraryStore({SharedPreferencesAsync? preferences})
-      : _preferences = preferences ?? SharedPreferencesAsync();
+  BrowserLibraryStore([this._preferences]);
 
   static const _historyKey = 'streamflow.browser.history.v1';
   static const _favoritesKey = 'streamflow.browser.favorites.v1';
 
-  final SharedPreferencesAsync _preferences;
+  SharedPreferencesAsync? _preferences;
+
+  SharedPreferencesAsync get _prefs =>
+      _preferences ??= SharedPreferencesAsync();
 
   Future<BrowserLibrarySnapshot> load() async {
     final values = await Future.wait<String?>([
-      _preferences.getString(_historyKey),
-      _preferences.getString(_favoritesKey),
+      _prefs.getString(_historyKey),
+      _prefs.getString(_favoritesKey),
     ]);
 
     return BrowserLibrarySnapshot(
@@ -36,10 +38,10 @@ class BrowserLibraryStore {
   }
 
   Future<void> saveHistory(List<BrowserEntry> entries) =>
-      _preferences.setString(_historyKey, _encode(entries));
+      _prefs.setString(_historyKey, _encode(entries));
 
   Future<void> saveFavorites(List<BrowserEntry> entries) =>
-      _preferences.setString(_favoritesKey, _encode(entries));
+      _prefs.setString(_favoritesKey, _encode(entries));
 
   String _encode(List<BrowserEntry> entries) =>
       jsonEncode(entries.map((entry) => entry.toJson()).toList(growable: false));

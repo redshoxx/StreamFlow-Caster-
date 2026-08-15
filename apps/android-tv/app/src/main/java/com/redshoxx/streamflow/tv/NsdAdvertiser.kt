@@ -3,10 +3,9 @@ package com.redshoxx.streamflow.tv
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
-import android.os.Build
 
 class NsdAdvertiser(context: Context) {
-    private val nsd = context.getSystemService(Context.NSD_SERVICE) as NsdManager
+    private val nsd = context.applicationContext.getSystemService(Context.NSD_SERVICE) as NsdManager
     private var listener: NsdManager.RegistrationListener? = null
 
     fun start(port: Int) {
@@ -15,10 +14,9 @@ class NsdAdvertiser(context: Context) {
             serviceName = "StreamFlow TV"
             serviceType = "_streamflow._tcp."
             setPort(port)
-            if (Build.VERSION.SDK_INT >= 21) {
-                setAttribute("version", "0.1")
-                setAttribute("protocol", "1")
-            }
+            setAttribute("version", "0.5.1")
+            setAttribute("protocol", "2")
+            setAttribute("pairing", "required")
         }
         val registration = object : NsdManager.RegistrationListener {
             override fun onServiceRegistered(serviceInfo: NsdServiceInfo) = Unit

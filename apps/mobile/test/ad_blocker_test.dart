@@ -5,15 +5,33 @@ void main() {
   group('AdBlocker.shouldBlockUrl', () {
     final blocker = AdBlocker();
 
-    test('blocks known ad hosts and subdomains', () {
+    test('blocks known ad and analytics hosts and subdomains', () {
       expect(blocker.shouldBlockUrl('https://doubleclick.net/ad.js'), isTrue);
-      expect(blocker.shouldBlockUrl('https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js'), isTrue);
-      expect(blocker.shouldBlockUrl('https://ads.example.openx.net/banner'), isTrue);
+      expect(
+        blocker.shouldBlockUrl(
+          'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js',
+        ),
+        isTrue,
+      );
+      expect(
+        blocker.shouldBlockUrl('https://ads.example.openx.net/banner'),
+        isTrue,
+      );
+      expect(
+        blocker.shouldBlockUrl('https://www.google-analytics.com/g/collect'),
+        isTrue,
+      );
     });
 
     test('does not block normal site and media URLs', () {
-      expect(blocker.shouldBlockUrl('https://example.com/video/master.m3u8'), isFalse);
-      expect(blocker.shouldBlockUrl('https://cdn.example.com/movie.mp4'), isFalse);
+      expect(
+        blocker.shouldBlockUrl('https://example.com/video/master.m3u8'),
+        isFalse,
+      );
+      expect(
+        blocker.shouldBlockUrl('https://cdn.example.com/movie.mp4'),
+        isFalse,
+      );
     });
   });
 }

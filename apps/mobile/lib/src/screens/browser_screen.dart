@@ -23,11 +23,17 @@ class BrowserScreen extends StatefulWidget {
 }
 
 class _BrowserScreenState extends State<BrowserScreen> {
+  static const _homeUrl = 'https://www.google.com';
+  static const _maxPageMedia = 100;
+
   late final WebViewController _web;
-  final _address = TextEditingController(text: 'https://www.google.com');
+  final _address = TextEditingController(text: _homeUrl);
   final List<DetectedMedia> _pageMedia = <DetectedMedia>[];
   final _adBlocker = AdBlocker();
 
+  Timer? _earlyAdBlockTimer;
+  Timer? _latePageTimer;
+  var _pageGeneration = 0;
   var _progress = 0;
   var _pageTitle = 'Browser';
   var _adBlockEnabled = true;
@@ -38,7 +44,6 @@ class _BrowserScreenState extends State<BrowserScreen> {
   void initState() {
     super.initState();
     _currentUri = Uri.parse(_address.text);
-    unawaited(_restoreAdBlocker());
 
     _web = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -56,53 +61,8 @@ class _BrowserScreenState extends State<BrowserScreen> {
           onProgress: (value) {
             if (mounted) setState(() => _progress = value);
           },
-          onPageStarted: (url) {
-            if (!mounted) return;
-            setState(() {
-              _address.text = url;
-              _currentUri = Uri.tryParse(url);
-              _progress = 0;
-              _blockedAds = 0;
-              _pageMedia.clear();
-            });
-
-            if (_adBlockEnabled) {
-              Future<void>.delayed(const Duration(milliseconds: 150), () async {
-                if (mounted && _adBlockEnabled) await _applyAdBlocker();
-              });
-              Future<void>.delayed(const Duration(milliseconds: 700), () async {
-                if (mounted && _adBlockEnabled) await _applyAdBlocker();
-              });
-            }
-          },
-          onPageFinished: (url) async {
-            if (!mounted) return;
-            _address.text = url;
-            if (_adBlockEnabled) await _applyAdBlocker();
-
-            final title = await _web.getTitle();
-            if (!mounted) return;
-
-            final resolvedTitle = title?.trim().isNotEmpty == true
-                ? title!.trim()
-                : Uri.tryParse(url)?.host ?? 'Browser';
-            final uri = Uri.tryParse(url);
-            setState(() {
-              _pageTitle = resolvedTitle;
-              _currentUri = uri;
-              _progress = 100;
-            });
-            if (uri != null) {
-              unawaited(widget.controller.recordVisit(uri, resolvedTitle));
-            }
-
-            await _scan();
-            Future<void>.delayed(const Duration(seconds: 2), () async {
-              if (!mounted) return;
-              if (_adBlockEnabled) await _applyAdBlocker();
-              await _scan();
-            });
-          },
+          onPageStarted: _onPageStarted,
+          onPageFinished: _onPageFinished,
           onNavigationRequest: (request) {
             if (_adBlockEnabled && _adBlocker.shouldBlockUrl(request.url)) {
               if (mounted) setState(() => _blockedAds += 1);
@@ -112,19 +72,85 @@ class _BrowserScreenState extends State<BrowserScreen> {
             return NavigationDecision.navigate;
           },
         ),
-      )
-      ..loadRequest(Uri.parse(_address.text));
+      );
+
+    unawaited(_initializeBrowser());
   }
 
-  Future<void> _restoreAdBlocker() async {
+  Future<void> _initializeBrowser() async {
+    var enabled = true;
     try {
-      final enabled = await _adBlocker.loadEnabled();
-      if (!mounted) return;
-      if (enabled != _adBlockEnabled) setState(() => _adBlockEnabled = enabled);
-      if (enabled) await _applyAdBlocker();
+      enabled = await _adBlocker.loadEnabled();
     } catch (_) {
-      // Ad blocking stays enabled by default if preferences cannot be read.
+      // Ad blocking stays enabled if preferences are unavailable.
     }
+    if (!mounted) return;
+    if (enabled != _adBlockEnabled) {
+      setState(() => _adBlockEnabled = enabled);
+    }
+    await _web.loadRequest(Uri.parse(_homeUrl));
+  }
+
+  void _onPageStarted(String url) {
+    if (!mounted) return;
+    _earlyAdBlockTimer?.cancel();
+    _latePageTimer?.cancel();
+    final generation = ++_pageGeneration;
+
+    setState(() {
+      _address.text = url;
+      _currentUri = Uri.tryParse(url);
+      _progress = 0;
+      _blockedAds = 0;
+      _pageMedia.clear();
+    });
+
+    if (_adBlockEnabled) {
+      _earlyAdBlockTimer = Timer(const Duration(milliseconds: 250), () {
+        if (mounted &&
+            _adBlockEnabled &&
+            generation == _pageGeneration) {
+          unawaited(_applyAdBlocker());
+        }
+      });
+    }
+  }
+
+  Future<void> _onPageFinished(String url) async {
+    if (!mounted) return;
+    final generation = _pageGeneration;
+    final finishedUri = Uri.tryParse(url);
+    if (finishedUri == null || _currentUri?.toString() != finishedUri.toString()) {
+      return;
+    }
+
+    _address.text = url;
+    if (_adBlockEnabled) await _applyAdBlocker();
+    if (!mounted || generation != _pageGeneration) return;
+
+    final title = await _web.getTitle();
+    if (!mounted || generation != _pageGeneration) return;
+
+    final resolvedTitle = title?.trim().isNotEmpty == true
+        ? title!.trim()
+        : finishedUri.host.isNotEmpty
+            ? finishedUri.host
+            : 'Browser';
+    setState(() {
+      _pageTitle = resolvedTitle;
+      _currentUri = finishedUri;
+      _progress = 100;
+    });
+    unawaited(widget.controller.recordVisit(finishedUri, resolvedTitle));
+
+    await _scan(expectedGeneration: generation);
+    if (!mounted || generation != _pageGeneration) return;
+
+    _latePageTimer?.cancel();
+    _latePageTimer = Timer(const Duration(seconds: 2), () {
+      if (!mounted || generation != _pageGeneration) return;
+      unawaited(_scan(expectedGeneration: generation));
+    });
   }
 
   Future<void> _applyAdBlocker() async {
@@ -132,7 +158,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
     try {
       await _web.runJavaScript(_adBlocker.javaScript);
     } catch (_) {
-      // Some documents do not allow script execution during early load stages.
+      // Early document stages can temporarily reject script execution.
     }
   }
 
@@ -155,13 +181,27 @@ class _BrowserScreenState extends State<BrowserScreen> {
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(enabled ? 'Adblocker aktiviert.' : 'Adblocker deaktiviert.')),
+      SnackBar(
+        content: Text(
+          enabled ? 'Adblocker aktiviert.' : 'Adblocker deaktiviert.',
+        ),
+      ),
     );
   }
 
-  Future<void> _scan() async {
+  Future<void> _scan({int? expectedGeneration}) async {
+    if (expectedGeneration != null && expectedGeneration != _pageGeneration) {
+      return;
+    }
     try {
-      final raw = await _web.runJavaScriptReturningResult(MediaDetector.domScannerScript);
+      final raw = await _web.runJavaScriptReturningResult(
+        MediaDetector.domScannerScript,
+      );
+      if (!mounted ||
+          (expectedGeneration != null && expectedGeneration != _pageGeneration)) {
+        return;
+      }
+
       String json = raw.toString();
       if (json.startsWith('"') && json.endsWith('"')) {
         json = jsonDecode(json) as String;
@@ -176,7 +216,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
         );
       }
     } catch (_) {
-      // Some pages block injected JavaScript. Navigation interception still works.
+      // Some pages block injected JavaScript. Navigation interception remains active.
     }
   }
 
@@ -184,27 +224,50 @@ class _BrowserScreenState extends State<BrowserScreen> {
     if (_adBlockEnabled && _adBlocker.shouldBlockUrl(url)) return;
     final candidate = MediaDetector.fromUrl(url, label: label, mime: mime);
     if (candidate == null || _pageMedia.contains(candidate)) return;
-    if (mounted) setState(() => _pageMedia.add(candidate));
+
+    if (mounted) {
+      setState(() {
+        _pageMedia.add(candidate);
+        if (_pageMedia.length > _maxPageMedia) {
+          _pageMedia.removeAt(0);
+        }
+      });
+    }
     widget.controller.addDetectedMedia(candidate);
   }
 
   void _go() {
-    var value = _address.text.trim();
+    final raw = _address.text.trim();
+    if (raw.isEmpty) return;
+
+    var value = raw;
     if (!value.contains('://')) {
-      if (value.contains('.') && !value.contains(' ')) {
+      if ((value.contains('.') || value.startsWith('localhost')) &&
+          !value.contains(' ')) {
         value = 'https://$value';
       } else {
-        value = 'https://www.google.com/search?q=${Uri.encodeQueryComponent(value)}';
+        value = _searchUrl(value);
       }
     }
-    final uri = Uri.tryParse(value);
-    if (uri != null) {
-      FocusScope.of(context).unfocus();
-      _web.loadRequest(uri);
+
+    var uri = Uri.tryParse(value);
+    if (!_isWebUri(uri)) {
+      uri = Uri.parse(_searchUrl(raw));
     }
+
+    FocusScope.of(context).unfocus();
+    unawaited(_web.loadRequest(uri!));
   }
 
-  Future<void> _home() => _web.loadRequest(Uri.parse('https://www.google.com'));
+  String _searchUrl(String query) =>
+      'https://www.google.com/search?q=${Uri.encodeQueryComponent(query)}';
+
+  bool _isWebUri(Uri? uri) =>
+      uri != null &&
+      (uri.scheme == 'http' || uri.scheme == 'https') &&
+      uri.host.isNotEmpty;
+
+  Future<void> _home() => _web.loadRequest(Uri.parse(_homeUrl));
 
   Future<void> _toggleFavorite() async {
     final uri = _currentUri;
@@ -213,17 +276,23 @@ class _BrowserScreenState extends State<BrowserScreen> {
     await widget.controller.toggleFavorite(uri, _pageTitle);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(wasFavorite ? 'Aus Favoriten entfernt.' : 'Zu Favoriten hinzugefügt.')),
+      SnackBar(
+        content: Text(
+          wasFavorite ? 'Aus Favoriten entfernt.' : 'Zu Favoriten hinzugefügt.',
+        ),
+      ),
     );
   }
 
   void _openBrowserEntry(BrowserEntry entry) {
     Navigator.of(context).pop();
-    _web.loadRequest(entry.url);
+    unawaited(_web.loadRequest(entry.url));
   }
 
   @override
   void dispose() {
+    _earlyAdBlockTimer?.cancel();
+    _latePageTimer?.cancel();
     _address.dispose();
     super.dispose();
   }
@@ -233,6 +302,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final favorite = widget.controller.isFavorite(_currentUri);
+    final secure = _currentUri?.scheme == 'https';
 
     return SafeArea(
       child: Column(
@@ -245,15 +315,27 @@ class _BrowserScreenState extends State<BrowserScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('StreamFlow', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
-                      Text(_pageTitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall),
+                      Text(
+                        'StreamFlow',
+                        style: theme.textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      Text(
+                        _pageTitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall,
+                      ),
                     ],
                   ),
                 ),
                 IconButton(
                   tooltip: favorite ? 'Favorit entfernen' : 'Favorit hinzufügen',
                   onPressed: _currentUri == null ? null : _toggleFavorite,
-                  icon: Icon(favorite ? Icons.star_rounded : Icons.star_border_rounded),
+                  icon: Icon(
+                    favorite ? Icons.star_rounded : Icons.star_border_rounded,
+                  ),
                 ),
                 IconButton(
                   tooltip: 'Favoriten und Verlauf',
@@ -270,20 +352,24 @@ class _BrowserScreenState extends State<BrowserScreen> {
                     label: Text(_blockedAds > 99 ? '99+' : '$_blockedAds'),
                     child: Icon(
                       Icons.security,
-                      color: _adBlockEnabled ? colors.primary : colors.onSurfaceVariant,
+                      color: _adBlockEnabled
+                          ? colors.primary
+                          : colors.onSurfaceVariant,
                     ),
                   ),
                 ),
                 if (widget.controller.isCasting)
                   IconButton(
                     tooltip: 'Wiedergabe steuern',
-                    onPressed: () => showCastRemoteSheet(context, widget.controller),
+                    onPressed: () =>
+                        showCastRemoteSheet(context, widget.controller),
                     icon: Icon(Icons.cast_connected, color: colors.primary),
                   )
                 else
                   IconButton(
                     tooltip: 'Cast',
-                    onPressed: _pageMedia.isEmpty ? null : () => _showMedia(context),
+                    onPressed:
+                        _pageMedia.isEmpty ? null : () => _showMedia(context),
                     icon: const Icon(Icons.cast_outlined),
                   ),
               ],
@@ -299,7 +385,11 @@ class _BrowserScreenState extends State<BrowserScreen> {
               child: Row(
                 children: [
                   const SizedBox(width: 12),
-                  Icon(Icons.lock_outline, size: 17, color: colors.onSurfaceVariant),
+                  Icon(
+                    secure ? Icons.lock_outline : Icons.info_outline_rounded,
+                    size: 17,
+                    color: secure ? colors.primary : colors.onSurfaceVariant,
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: TextField(
@@ -317,13 +407,19 @@ class _BrowserScreenState extends State<BrowserScreen> {
                       ),
                     ),
                   ),
-                  IconButton(onPressed: _go, icon: const Icon(Icons.arrow_forward_rounded)),
+                  IconButton(
+                    onPressed: _go,
+                    icon: const Icon(Icons.arrow_forward_rounded),
+                  ),
                 ],
               ),
             ),
           ),
           if (_progress < 100)
-            LinearProgressIndicator(value: _progress <= 0 ? null : _progress / 100, minHeight: 2),
+            LinearProgressIndicator(
+              value: _progress <= 0 ? null : _progress / 100,
+              minHeight: 2,
+            ),
           Expanded(
             child: Stack(
               children: [
@@ -351,11 +447,31 @@ class _BrowserScreenState extends State<BrowserScreen> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
-                  IconButton(tooltip: 'Zurück', onPressed: () => _web.goBack(), icon: const Icon(Icons.arrow_back_ios_new_rounded)),
-                  IconButton(tooltip: 'Vor', onPressed: () => _web.goForward(), icon: const Icon(Icons.arrow_forward_ios_rounded)),
-                  IconButton(tooltip: 'Startseite', onPressed: _home, icon: const Icon(Icons.home_outlined)),
-                  IconButton(tooltip: 'Neu laden', onPressed: () => _web.reload(), icon: const Icon(Icons.refresh_rounded)),
-                  IconButton(tooltip: 'Medien suchen', onPressed: _scan, icon: const Icon(Icons.manage_search_rounded)),
+                  IconButton(
+                    tooltip: 'Zurück',
+                    onPressed: () => _web.goBack(),
+                    icon: const Icon(Icons.arrow_back_ios_new_rounded),
+                  ),
+                  IconButton(
+                    tooltip: 'Vor',
+                    onPressed: () => _web.goForward(),
+                    icon: const Icon(Icons.arrow_forward_ios_rounded),
+                  ),
+                  IconButton(
+                    tooltip: 'Startseite',
+                    onPressed: _home,
+                    icon: const Icon(Icons.home_outlined),
+                  ),
+                  IconButton(
+                    tooltip: 'Neu laden',
+                    onPressed: () => _web.reload(),
+                    icon: const Icon(Icons.refresh_rounded),
+                  ),
+                  IconButton(
+                    tooltip: 'Medien suchen',
+                    onPressed: _scan,
+                    icon: const Icon(Icons.manage_search_rounded),
+                  ),
                 ],
               ),
             ),
@@ -399,12 +515,24 @@ class _BrowserScreenState extends State<BrowserScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Gefundene Medien', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
-                        Text('${_pageMedia.length} Quellen auf dieser Seite', style: Theme.of(context).textTheme.bodySmall),
+                        Text(
+                          'Gefundene Medien',
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleLarge
+                              ?.copyWith(fontWeight: FontWeight.w700),
+                        ),
+                        Text(
+                          '${_pageMedia.length} Quellen auf dieser Seite',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
                       ],
                     ),
                   ),
-                  IconButton(onPressed: _scan, icon: const Icon(Icons.refresh)),
+                  IconButton(
+                    onPressed: _scan,
+                    icon: const Icon(Icons.refresh),
+                  ),
                 ],
               ),
             ),
@@ -418,9 +546,19 @@ class _BrowserScreenState extends State<BrowserScreen> {
                   final item = _pageMedia[index];
                   return Card(
                     child: ListTile(
-                      leading: CircleAvatar(child: Icon(_mediaIcon(item.kind))),
-                      title: Text(item.displayName, maxLines: 1, overflow: TextOverflow.ellipsis),
-                      subtitle: Text('${_mediaLabel(item.kind)} • ${item.url.host}', maxLines: 1, overflow: TextOverflow.ellipsis),
+                      leading: CircleAvatar(
+                        child: Icon(_mediaIcon(item.kind)),
+                      ),
+                      title: Text(
+                        item.displayName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(
+                        '${_mediaLabel(item.kind)} • ${item.url.host}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                       trailing: const Icon(Icons.cast_outlined),
                       onTap: () async {
                         Navigator.of(sheetContext).pop();
@@ -438,15 +576,19 @@ class _BrowserScreenState extends State<BrowserScreen> {
   }
 
   Future<void> _cast(DetectedMedia item) async {
-    final device = await showDialog<CastDevice>(
+    final target = await showDialog<CastTarget>(
       context: context,
       builder: (_) => CastMediaDialog(
         media: item,
         preferredDeviceId: widget.controller.preferredDevice?.id,
       ),
     );
-    if (!mounted || device == null) return;
-    widget.controller.startCasting(device, item);
+    if (!mounted || target == null) return;
+    widget.controller.startCasting(
+      target.device,
+      item,
+      pairingCode: target.pairingCode,
+    );
     await showCastRemoteSheet(context, widget.controller);
   }
 
@@ -489,7 +631,10 @@ class _BrowserLibrarySheet extends StatelessWidget {
                 Expanded(
                   child: Text(
                     'Browser-Bibliothek',
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleLarge
+                        ?.copyWith(fontWeight: FontWeight.w700),
                   ),
                 ),
                 if (controller.history.isNotEmpty)
@@ -520,14 +665,16 @@ class _BrowserLibrarySheet extends StatelessWidget {
                       emptyIcon: Icons.star_border_rounded,
                       emptyText: 'Noch keine Favoriten',
                       onOpen: onOpen,
-                      onRemove: (entry) => unawaited(controller.removeFavorite(entry.url)),
+                      onRemove: (entry) =>
+                          unawaited(controller.removeFavorite(entry.url)),
                     ),
                     _BrowserEntryList(
                       entries: controller.history,
                       emptyIcon: Icons.history_toggle_off_rounded,
                       emptyText: 'Noch kein Browserverlauf',
                       onOpen: onOpen,
-                      onRemove: (entry) => unawaited(controller.removeHistoryEntry(entry.url)),
+                      onRemove: (entry) =>
+                          unawaited(controller.removeHistoryEntry(entry.url)),
                     ),
                   ],
                 );
@@ -578,9 +725,23 @@ class _BrowserEntryList extends StatelessWidget {
         final entry = entries[index];
         return Card(
           child: ListTile(
-            leading: CircleAvatar(child: Text(entry.url.host.isEmpty ? '?' : entry.url.host[0].toUpperCase())),
-            title: Text(entry.displayTitle, maxLines: 1, overflow: TextOverflow.ellipsis),
-            subtitle: Text(entry.url.host, maxLines: 1, overflow: TextOverflow.ellipsis),
+            leading: CircleAvatar(
+              child: Text(
+                entry.url.host.isEmpty
+                    ? '?'
+                    : entry.url.host[0].toUpperCase(),
+              ),
+            ),
+            title: Text(
+              entry.displayTitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            subtitle: Text(
+              entry.url.host,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
             onTap: () => onOpen(entry),
             trailing: IconButton(
               tooltip: 'Entfernen',

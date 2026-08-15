@@ -4,11 +4,14 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ["apps/mobile/**"]
+    paths:
+      - "apps/mobile/**"
+      - ".github/workflows/android-mobile.yml"
 
 jobs:
   apk:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: apps/mobile
@@ -16,12 +19,48 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: "3.47.0"
           cache: true
-      - run: flutter create --platforms=android --org com.redshoxx --project-name streamflow .
-      - run: flutter pub get
-      - run: flutter build apk --release
+      - name: Create Android platform project
+        run: flutter create --platforms=android --org com.redshoxx --project-name streamflow .
+      - name: Resolve packages
+        run: flutter pub get
+      - name: Build optimized APK
+        run: flutter build apk --release
+      - name: Prepare and optionally production-sign APK
+        env:
+          MOBILE_KEYSTORE_BASE64: ${{ secrets.ANDROID_MOBILE_KEYSTORE_BASE64 }}
+          MOBILE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_MOBILE_KEYSTORE_PASSWORD }}
+          MOBILE_KEY_ALIAS: ${{ secrets.ANDROID_MOBILE_KEY_ALIAS }}
+          MOBILE_KEY_PASSWORD: ${{ secrets.ANDROID_MOBILE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p ../../dist
+          cp build/app/outputs/flutter-apk/app-release.apk ../../dist/StreamFlow-Mobile-test.apk
+
+          if [ -n "${MOBILE_KEYSTORE_BASE64:-}" ] && [ -n "${MOBILE_KEYSTORE_PASSWORD:-}" ] && [ -n "${MOBILE_KEY_ALIAS:-}" ] && [ -n "${MOBILE_KEY_PASSWORD:-}" ]; then
+            echo "$MOBILE_KEYSTORE_BASE64" | base64 --decode > /tmp/streamflow-mobile.jks
+            APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+            "$APKSIGNER" sign \
+              --ks /tmp/streamflow-mobile.jks \
+              --ks-key-alias "$MOBILE_KEY_ALIAS" \
+              --ks-pass env:MOBILE_KEYSTORE_PASSWORD \
+              --key-pass env:MOBILE_KEY_PASSWORD \
+              --out ../../dist/StreamFlow-Mobile-release.apk \
+              ../../dist/StreamFlow-Mobile-test.apk
+            "$APKSIGNER" verify --verbose --print-certs ../../dist/StreamFlow-Mobile-release.apk
+            rm -f /tmp/streamflow-mobile.jks
+          else
+            echo "Mobile signing secrets are not configured; producing an installable test APK only."
+          fi
+
+          cd ../../dist
+          sha256sum StreamFlow-Mobile-*.apk > StreamFlow-Mobile.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: StreamFlow-Mobile-release
-          path: apps/mobile/build/app/outputs/flutter-apk/app-release.apk
+          name: StreamFlow-Mobile
+          path: |
+            dist/StreamFlow-Mobile-test.apk
+            dist/StreamFlow-Mobile-release.apk
+            dist/StreamFlow-Mobile.sha256
+          if-no-files-found: warn

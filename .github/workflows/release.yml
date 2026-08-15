@@ -10,6 +10,7 @@ permissions:
 jobs:
   mobile:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: apps/mobile
@@ -17,14 +18,36 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: "3.47.0"
           cache: true
       - run: flutter create --platforms=android --org com.redshoxx --project-name streamflow .
       - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
       - run: flutter build apk --release
-      - name: Prepare mobile artifact
+      - name: Production-sign mobile APK
+        env:
+          MOBILE_KEYSTORE_BASE64: ${{ secrets.ANDROID_MOBILE_KEYSTORE_BASE64 }}
+          MOBILE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_MOBILE_KEYSTORE_PASSWORD }}
+          MOBILE_KEY_ALIAS: ${{ secrets.ANDROID_MOBILE_KEY_ALIAS }}
+          MOBILE_KEY_PASSWORD: ${{ secrets.ANDROID_MOBILE_KEY_PASSWORD }}
         run: |
-          cp build/app/outputs/flutter-apk/app-release.apk ../../StreamFlow-Mobile-release.apk
+          set -euo pipefail
+          if [ -z "${MOBILE_KEYSTORE_BASE64:-}" ] || [ -z "${MOBILE_KEYSTORE_PASSWORD:-}" ] || [ -z "${MOBILE_KEY_ALIAS:-}" ] || [ -z "${MOBILE_KEY_PASSWORD:-}" ]; then
+            echo "Production mobile signing secrets are required for tagged releases."
+            exit 1
+          fi
+          echo "$MOBILE_KEYSTORE_BASE64" | base64 --decode > /tmp/streamflow-mobile.jks
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          "$APKSIGNER" sign \
+            --ks /tmp/streamflow-mobile.jks \
+            --ks-key-alias "$MOBILE_KEY_ALIAS" \
+            --ks-pass env:MOBILE_KEYSTORE_PASSWORD \
+            --key-pass env:MOBILE_KEY_PASSWORD \
+            --out ../../StreamFlow-Mobile-release.apk \
+            build/app/outputs/flutter-apk/app-release.apk
+          "$APKSIGNER" verify --verbose --print-certs ../../StreamFlow-Mobile-release.apk
+          rm -f /tmp/streamflow-mobile.jks
           cd ../..
           sha256sum StreamFlow-Mobile-release.apk > StreamFlow-Mobile-release.apk.sha256
       - uses: actions/upload-artifact@v4
@@ -37,6 +60,7 @@ jobs:
 
   tv:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: apps/android-tv
@@ -49,8 +73,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "9.5.0"
-      - run: gradle :app:assembleDebug :app:assembleRelease
-      - name: Prepare Android TV artifacts
+      - run: gradle --no-daemon :app:lintRelease :app:assembleRelease
+      - name: Production-sign Android TV APK
         env:
           TV_KEYSTORE_BASE64: ${{ secrets.ANDROID_TV_KEYSTORE_BASE64 }}
           TV_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_TV_KEYSTORE_PASSWORD }}
@@ -58,45 +82,41 @@ jobs:
           TV_KEY_PASSWORD: ${{ secrets.ANDROID_TV_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          cp app/build/outputs/apk/debug/app-debug.apk ../../StreamFlow-TV-test.apk
+          if [ -z "${TV_KEYSTORE_BASE64:-}" ] || [ -z "${TV_KEYSTORE_PASSWORD:-}" ] || [ -z "${TV_KEY_ALIAS:-}" ] || [ -z "${TV_KEY_PASSWORD:-}" ]; then
+            echo "Production TV signing secrets are required for tagged releases."
+            exit 1
+          fi
 
           RELEASE_APK="$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' | head -n 1)"
           if [ -z "$RELEASE_APK" ]; then
             echo "No Android TV release APK was produced."
             exit 1
           fi
-          cp "$RELEASE_APK" ../../StreamFlow-TV-release-unsigned.apk
 
-          if [ -n "${TV_KEYSTORE_BASE64:-}" ] && [ -n "${TV_KEYSTORE_PASSWORD:-}" ] && [ -n "${TV_KEY_ALIAS:-}" ] && [ -n "${TV_KEY_PASSWORD:-}" ]; then
-            echo "$TV_KEYSTORE_BASE64" | base64 --decode > /tmp/streamflow-tv.jks
-            APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
-            "$APKSIGNER" sign \
-              --ks /tmp/streamflow-tv.jks \
-              --ks-key-alias "$TV_KEY_ALIAS" \
-              --ks-pass env:TV_KEYSTORE_PASSWORD \
-              --key-pass env:TV_KEY_PASSWORD \
-              --out ../../StreamFlow-TV-release.apk \
-              ../../StreamFlow-TV-release-unsigned.apk
-            "$APKSIGNER" verify --verbose ../../StreamFlow-TV-release.apk
-            rm -f /tmp/streamflow-tv.jks
-          else
-            echo "TV signing secrets are not configured. Publishing test + unsigned release APKs."
-          fi
-
+          echo "$TV_KEYSTORE_BASE64" | base64 --decode > /tmp/streamflow-tv.jks
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          "$APKSIGNER" sign \
+            --ks /tmp/streamflow-tv.jks \
+            --ks-key-alias "$TV_KEY_ALIAS" \
+            --ks-pass env:TV_KEYSTORE_PASSWORD \
+            --key-pass env:TV_KEY_PASSWORD \
+            --out ../../StreamFlow-TV-release.apk \
+            "$RELEASE_APK"
+          "$APKSIGNER" verify --verbose --print-certs ../../StreamFlow-TV-release.apk
+          rm -f /tmp/streamflow-tv.jks
           cd ../..
-          sha256sum StreamFlow-TV-*.apk > StreamFlow-TV.sha256
+          sha256sum StreamFlow-TV-release.apk > StreamFlow-TV-release.apk.sha256
       - uses: actions/upload-artifact@v4
         with:
           name: tv-apk
           path: |
-            StreamFlow-TV-test.apk
-            StreamFlow-TV-release-unsigned.apk
             StreamFlow-TV-release.apk
-            StreamFlow-TV.sha256
-          if-no-files-found: warn
+            StreamFlow-TV-release.apk.sha256
+          if-no-files-found: error
 
   ios:
     runs-on: macos-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: apps/mobile
@@ -104,7 +124,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: "3.47.0"
           cache: true
       - run: flutter create --platforms=ios --org com.redshoxx --project-name streamflow .
       - name: Configure local-network permissions
@@ -137,6 +157,7 @@ jobs:
   github-release:
     needs: [mobile, tv, ios]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -146,8 +167,8 @@ jobs:
           files: |
             StreamFlow-Mobile-release.apk
             StreamFlow-Mobile-release.apk.sha256
-            StreamFlow-TV-*.apk
-            StreamFlow-TV.sha256
+            StreamFlow-TV-release.apk
+            StreamFlow-TV-release.apk.sha256
             StreamFlow-iOS-unsigned.ipa
             StreamFlow-iOS-unsigned.ipa.sha256
           generate_release_notes: true

@@ -27,6 +27,7 @@ class AdBlocker {
     'outbrain.com',
     'scorecardresearch.com',
     'quantserve.com',
+    'google-analytics.com',
   ];
 
   SharedPreferencesAsync? _preferences;
@@ -89,24 +90,52 @@ class AdBlocker {
     'iframe[src*="googlesyndication.com"]',
     'iframe[src*="amazon-adsystem.com"]'
   ];
+  const selectorText = selectors.join(',');
 
-  const clean = () => {
+  const removeElement = (element) => {
+    if (!element || !element.isConnected) return 0;
+    element.remove();
+    return 1;
+  };
+
+  const cleanNode = (node) => {
+    if (!(node instanceof Element)) return 0;
     let removed = 0;
-    for (const selector of selectors) {
-      document.querySelectorAll(selector).forEach((element) => {
-        element.remove();
-        removed += 1;
-      });
+
+    try {
+      if (node.matches(selectorText)) return removeElement(node);
+    } catch (_) {}
+
+    if (node.hasAttribute && node.hasAttribute('src') && isBlocked(node.getAttribute('src'))) {
+      return removeElement(node);
     }
 
-    document.querySelectorAll('iframe[src], img[src], script[src]').forEach((element) => {
-      const source = element.getAttribute('src');
-      if (source && isBlocked(source)) {
-        element.remove();
-        removed += 1;
-      }
-    });
+    try {
+      node.querySelectorAll(selectorText).forEach((element) => {
+        removed += removeElement(element);
+      });
+      node.querySelectorAll('iframe[src], img[src], script[src]').forEach((element) => {
+        if (isBlocked(element.getAttribute('src'))) {
+          removed += removeElement(element);
+        }
+      });
+    } catch (_) {}
+    return removed;
+  };
 
+  const cleanDocument = () => {
+    if (!document.documentElement) return;
+    let removed = 0;
+    try {
+      document.querySelectorAll(selectorText).forEach((element) => {
+        removed += removeElement(element);
+      });
+      document.querySelectorAll('iframe[src], img[src], script[src]').forEach((element) => {
+        if (isBlocked(element.getAttribute('src'))) {
+          removed += removeElement(element);
+        }
+      });
+    } catch (_) {}
     report(removed);
   };
 
@@ -159,12 +188,20 @@ class AdBlocker {
     }
 
     if (document.documentElement) {
-      const observer = new MutationObserver(clean);
+      const observer = new MutationObserver((mutations) => {
+        let removed = 0;
+        for (const mutation of mutations) {
+          mutation.addedNodes.forEach((node) => {
+            removed += cleanNode(node);
+          });
+        }
+        report(removed);
+      });
       observer.observe(document.documentElement, {childList: true, subtree: true});
     }
   }
 
-  clean();
+  cleanDocument();
 })();
 ''';
   }

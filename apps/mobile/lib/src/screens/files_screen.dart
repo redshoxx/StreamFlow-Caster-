@@ -23,8 +23,18 @@ class FilesScreen extends StatefulWidget {
 
 class _FilesScreenState extends State<FilesScreen> {
   static const _extensions = <String>[
-    'mp4', 'm4v', 'mov', 'webm', 'mkv', 'ts',
-    'mp3', 'aac', 'm4a', 'flac', 'ogg', 'wav',
+    'mp4',
+    'm4v',
+    'mov',
+    'webm',
+    'mkv',
+    'ts',
+    'mp3',
+    'aac',
+    'm4a',
+    'flac',
+    'ogg',
+    'wav',
   ];
 
   static const _mediaTypeGroup = XTypeGroup(
@@ -34,38 +44,51 @@ class _FilesScreenState extends State<FilesScreen> {
     uniformTypeIdentifiers: <String>['public.movie', 'public.audio'],
   );
 
-  final _server = LocalMediaServer();
+  LocalMediaServer? _ownedServer;
   XFile? _selected;
   int? _selectedSize;
   bool _preparing = false;
   String? _error;
 
   Future<void> _pick() async {
-    final selected = await openFile(
-      acceptedTypeGroups: const <XTypeGroup>[_mediaTypeGroup],
-    );
-    if (!mounted || selected == null) return;
+    if (_preparing) return;
+    try {
+      final selected = await openFile(
+        acceptedTypeGroups: const <XTypeGroup>[_mediaTypeGroup],
+      );
+      if (!mounted || selected == null) return;
 
-    final extension = selected.name.split('.').last.toLowerCase();
-    if (!_extensions.contains(extension)) {
-      setState(() => _error = 'Dieses Dateiformat wird derzeit nicht unterstützt.');
-      return;
+      final extension = selected.name.split('.').last.toLowerCase();
+      if (!_extensions.contains(extension)) {
+        setState(() {
+          _error = 'Dieses Dateiformat wird derzeit nicht unterstützt.';
+        });
+        return;
+      }
+
+      final size = await selected.length();
+      if (!mounted) return;
+      setState(() {
+        _selected = selected;
+        _selectedSize = size;
+        _error = null;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _error = 'Die Datei konnte nicht geöffnet werden.';
+        });
+      }
     }
-
-    final size = await selected.length();
-    await _server.stop();
-    if (!mounted) return;
-    setState(() {
-      _selected = selected;
-      _selectedSize = size;
-      _error = null;
-    });
   }
 
   Future<void> _cast() async {
     final selected = _selected;
+    if (_preparing) return;
     if (selected == null || selected.path.isEmpty) {
-      setState(() => _error = 'Die ausgewählte Datei besitzt keinen lesbaren lokalen Pfad.');
+      setState(() {
+        _error = 'Die ausgewählte Datei besitzt keinen lesbaren lokalen Pfad.';
+      });
       return;
     }
 
@@ -74,16 +97,25 @@ class _FilesScreenState extends State<FilesScreen> {
       _error = null;
     });
 
+    final candidateServer = LocalMediaServer();
+    var candidateOwnedBySession = false;
     try {
-      final uri = await _server.serve(
+      final uri = await candidateServer.serve(
         File(selected.path),
         fileName: selected.name,
       );
-      final media = MediaDetector.fromUrl(uri.toString(), label: selected.name) ??
-          DetectedMedia(url: uri, kind: MediaKind.video, label: selected.name);
+      final media = MediaDetector.fromUrl(
+            uri.toString(),
+            label: selected.name,
+          ) ??
+          DetectedMedia(
+            url: uri,
+            kind: MediaKind.video,
+            label: selected.name,
+          );
 
       if (!mounted) return;
-      final device = await showDialog<CastDevice>(
+      final target = await showDialog<CastTarget>(
         context: context,
         builder: (_) => CastMediaDialog(
           media: media,
@@ -92,31 +124,43 @@ class _FilesScreenState extends State<FilesScreen> {
       );
 
       if (!mounted) return;
-      if (device == null) {
-        await _server.stop();
-        return;
-      }
+      if (target == null) return;
 
+      candidateOwnedBySession = true;
       widget.controller.startCasting(
-        device,
+        target.device,
         media,
-        onEnd: () => unawaited(_server.stop()),
+        pairingCode: target.pairingCode,
+        onEnd: () {
+          if (identical(_ownedServer, candidateServer)) {
+            _ownedServer = null;
+          }
+          unawaited(candidateServer.stop());
+        },
       );
+      _ownedServer = candidateServer;
       await showCastRemoteSheet(context, widget.controller);
     } on LocalMediaServerException catch (error) {
       if (mounted) setState(() => _error = error.message);
     } catch (_) {
       if (mounted) {
-        setState(() => _error = 'Die lokale Datei konnte nicht für den Fernseher bereitgestellt werden.');
+        setState(() {
+          _error = 'Die lokale Datei konnte nicht für den Fernseher bereitgestellt werden.';
+        });
       }
     } finally {
+      if (!candidateOwnedBySession) {
+        await candidateServer.stop();
+      }
       if (mounted) setState(() => _preparing = false);
     }
   }
 
   @override
   void dispose() {
-    unawaited(_server.stop());
+    final server = _ownedServer;
+    _ownedServer = null;
+    if (server != null) unawaited(server.stop());
     super.dispose();
   }
 
@@ -132,7 +176,9 @@ class _FilesScreenState extends State<FilesScreen> {
         children: [
           Text(
             'Lokale Dateien',
-            style: theme.textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w700),
+            style: theme.textTheme.headlineMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
           ),
           const SizedBox(height: 4),
           const Text(
@@ -163,11 +209,16 @@ class _FilesScreenState extends State<FilesScreen> {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.center,
-                    style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   if (_selectedSize != null) ...[
                     const SizedBox(height: 4),
-                    Text(_formatBytes(_selectedSize!), style: theme.textTheme.bodySmall),
+                    Text(
+                      _formatBytes(_selectedSize!),
+                      style: theme.textTheme.bodySmall,
+                    ),
                   ],
                   const SizedBox(height: 18),
                   SizedBox(
@@ -175,7 +226,11 @@ class _FilesScreenState extends State<FilesScreen> {
                     child: OutlinedButton.icon(
                       onPressed: _preparing ? null : _pick,
                       icon: const Icon(Icons.add_rounded),
-                      label: Text(selected == null ? 'Datei auswählen' : 'Andere Datei wählen'),
+                      label: Text(
+                        selected == null
+                            ? 'Datei auswählen'
+                            : 'Andere Datei wählen',
+                      ),
                     ),
                   ),
                   if (selected != null) ...[
@@ -191,7 +246,9 @@ class _FilesScreenState extends State<FilesScreen> {
                               )
                             : const Icon(Icons.cast_rounded),
                         label: Text(
-                          _preparing ? 'Wird vorbereitet …' : 'Auf Fernseher abspielen',
+                          _preparing
+                              ? 'Wird vorbereitet …'
+                              : 'Auf Fernseher abspielen',
                         ),
                       ),
                     ),

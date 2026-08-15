@@ -17,18 +17,40 @@ class LocalMediaServer {
     await stop();
 
     if (!await file.exists()) {
-      throw const LocalMediaServerException('Die ausgewählte Datei ist nicht mehr verfügbar.');
+      throw const LocalMediaServerException(
+        'Die ausgewählte Datei ist nicht mehr verfügbar.',
+      );
     }
 
     final host = await _findLanAddress();
-    final server = await HttpServer.bind(InternetAddress.anyIPv4, 0, shared: true);
+    final server = await HttpServer.bind(
+      InternetAddress.anyIPv4,
+      0,
+      shared: true,
+    );
     final token = _newToken();
 
     _file = file;
     _fileName = fileName;
     _token = token;
     _server = server;
-    server.listen(_handleRequest, onError: (_) {});
+    server.listen(
+      (request) async {
+        try {
+          await _handleRequest(request);
+        } catch (_) {
+          try {
+            request.response.statusCode = HttpStatus.internalServerError;
+            request.response.headers.set(HttpHeaders.cacheControlHeader, 'no-store');
+            await request.response.close();
+          } catch (_) {
+            // The response may already have been closed by a failed stream pipe.
+          }
+        }
+      },
+      onError: (_) {},
+      cancelOnError: false,
+    );
 
     return Uri(
       scheme: 'http',
@@ -47,7 +69,9 @@ class LocalMediaServer {
     }
 
     final segments = request.uri.pathSegments;
-    if (segments.length < 3 || segments[0] != 'media' || segments[1] != token) {
+    if (segments.length != 3 ||
+        segments[0] != 'media' ||
+        segments[1] != token) {
       await _fail(request, HttpStatus.notFound);
       return;
     }
@@ -56,6 +80,11 @@ class LocalMediaServer {
       request.response.statusCode = HttpStatus.methodNotAllowed;
       request.response.headers.set(HttpHeaders.allowHeader, 'GET, HEAD');
       await request.response.close();
+      return;
+    }
+
+    if (!await file.exists()) {
+      await _fail(request, HttpStatus.notFound);
       return;
     }
 
@@ -69,7 +98,10 @@ class LocalMediaServer {
       final parsed = _parseRange(range, length);
       if (parsed == null) {
         request.response.statusCode = HttpStatus.requestedRangeNotSatisfiable;
-        request.response.headers.set(HttpHeaders.contentRangeHeader, 'bytes */$length');
+        request.response.headers.set(
+          HttpHeaders.contentRangeHeader,
+          'bytes */$length',
+        );
         await request.response.close();
         return;
       }
@@ -82,17 +114,21 @@ class LocalMediaServer {
     response.statusCode = partial ? HttpStatus.partialContent : HttpStatus.ok;
     response.headers.set(HttpHeaders.acceptRangesHeader, 'bytes');
     response.headers.set(HttpHeaders.cacheControlHeader, 'no-store');
+    response.headers.set('X-Content-Type-Options', 'nosniff');
     response.headers.contentType = ContentType.parse(
       lookupMimeType(_fileName ?? file.path) ?? 'application/octet-stream',
     );
 
-    final contentLength = end - start + 1;
+    final contentLength = length == 0 ? 0 : end - start + 1;
     response.contentLength = contentLength;
     if (partial) {
-      response.headers.set(HttpHeaders.contentRangeHeader, 'bytes $start-$end/$length');
+      response.headers.set(
+        HttpHeaders.contentRangeHeader,
+        'bytes $start-$end/$length',
+      );
     }
 
-    if (request.method == 'HEAD') {
+    if (request.method == 'HEAD' || length == 0) {
       await response.close();
       return;
     }
@@ -130,8 +166,16 @@ class LocalMediaServer {
       includeLinkLocal: false,
     );
 
+    final ordered = [...interfaces]
+      ..sort((a, b) {
+        final aPreferred = _isLikelyWifiInterface(a.name);
+        final bPreferred = _isLikelyWifiInterface(b.name);
+        if (aPreferred == bPreferred) return 0;
+        return aPreferred ? -1 : 1;
+      });
+
     InternetAddress? fallback;
-    for (final interface in interfaces) {
+    for (final interface in ordered) {
       for (final address in interface.addresses) {
         fallback ??= address;
         if (_isPrivateIpv4(address.address)) return address.address;
@@ -142,6 +186,15 @@ class LocalMediaServer {
     throw const LocalMediaServerException(
       'Keine lokale WLAN-Adresse gefunden. Prüfe die Netzwerkverbindung.',
     );
+  }
+
+  bool _isLikelyWifiInterface(String name) {
+    final normalized = name.toLowerCase();
+    return normalized == 'en0' ||
+        normalized == 'en1' ||
+        normalized.startsWith('wlan') ||
+        normalized.contains('wifi') ||
+        normalized.contains('wi-fi');
   }
 
   bool _isPrivateIpv4(String address) {
@@ -161,6 +214,7 @@ class LocalMediaServer {
 
   Future<void> _fail(HttpRequest request, int statusCode) async {
     request.response.statusCode = statusCode;
+    request.response.headers.set(HttpHeaders.cacheControlHeader, 'no-store');
     await request.response.close();
   }
 
@@ -176,6 +230,7 @@ class LocalMediaServer {
 
 class LocalMediaServerException implements Exception {
   const LocalMediaServerException(this.message);
+
   final String message;
 
   @override
