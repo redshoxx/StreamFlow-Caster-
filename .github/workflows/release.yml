@@ -21,7 +21,7 @@ jobs:
           flutter-version: "3.47.0"
           cache: true
       - run: flutter create --platforms=android --org com.redshoxx --project-name streamflow .
-      - name: Configure Android LAN networking
+      - name: Configure Android release settings
         run: python3 ../../scripts/configure-mobile-android.py android/app/src/main/AndroidManifest.xml
       - run: flutter pub get
       - run: flutter analyze
@@ -129,14 +129,8 @@ jobs:
           flutter-version: "3.47.0"
           cache: true
       - run: flutter create --platforms=ios --org com.redshoxx --project-name streamflow .
-      - name: Configure local-network permissions
-        run: |
-          PLIST="ios/Runner/Info.plist"
-          /usr/libexec/PlistBuddy -c "Add :NSLocalNetworkUsageDescription string StreamFlow discovers and controls receivers on your local network." "$PLIST" || true
-          /usr/libexec/PlistBuddy -c "Add :NSBonjourServices array" "$PLIST" || true
-          /usr/libexec/PlistBuddy -c "Add :NSBonjourServices:0 string _streamflow._tcp" "$PLIST" || true
-          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "$PLIST" || true
-          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" "$PLIST" || true
+      - name: Configure StreamFlow iOS release settings
+        run: bash ../../scripts/configure-mobile-ios.sh ios
       - run: flutter pub get
       - run: flutter build ios --release --no-codesign
       - name: Package AltStore IPA
@@ -161,6 +155,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
@@ -174,3 +172,23 @@ jobs:
             StreamFlow-iOS-unsigned.ipa
             StreamFlow-iOS-unsigned.ipa.sha256
           generate_release_notes: true
+      - name: Update AltStore source metadata
+        run: |
+          python3 scripts/update-altstore-source.py \
+            --source altstore-source.json \
+            --ipa StreamFlow-iOS-unsigned.ipa \
+            --tag "$GITHUB_REF_NAME" \
+            --repository "$GITHUB_REPOSITORY"
+          python3 -m json.tool altstore-source.json >/dev/null
+      - name: Publish AltStore source metadata
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add altstore-source.json
+          if git diff --cached --quiet; then
+            echo "AltStore source already contains this build."
+            exit 0
+          fi
+          git commit -m "Publish AltStore metadata for $GITHUB_REF_NAME"
+          git push origin HEAD:main

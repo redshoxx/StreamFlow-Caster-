@@ -212,6 +212,7 @@ class MainActivity : ComponentActivity() {
     private fun startReceiverNetwork() {
         if (!networkAccessGranted || server != null || advertiser != null) return
 
+        networkStartError = null
         try {
             val newServer = ReceiverHttpServer(
                 port = port,
@@ -220,9 +221,17 @@ class MainActivity : ComponentActivity() {
             ).also { it.start(NanoTimeout.SOCKET_READ_TIMEOUT, false) }
             server = newServer
 
-            val newAdvertiser = NsdAdvertiser(this).also { it.start(port) }
+            val newAdvertiser = NsdAdvertiser(this)
             advertiser = newAdvertiser
-            networkStartError = null
+            newAdvertiser.start(port) { errorCode ->
+                runOnUiThread {
+                    if (advertiser === newAdvertiser) {
+                        stopReceiverNetwork()
+                        networkStartError =
+                            "StreamFlow TV konnte die Geräteerkennung im lokalen Netzwerk nicht registrieren (Fehler $errorCode). Versuche es erneut."
+                    }
+                }
+            }
         } catch (_: Exception) {
             stopReceiverNetwork()
             networkStartError =

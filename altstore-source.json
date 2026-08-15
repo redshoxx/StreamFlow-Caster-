@@ -1,15 +1,30 @@
 {
   "name": "StreamFlow",
   "identifier": "com.redshoxx.streamflow.source",
+  "subtitle": "Web- und lokale Medien auf StreamFlow TV übertragen",
+  "description": "StreamFlow ist ein Browser- und Cast-Controller für autorisierte Web- und lokale Medien im eigenen Netzwerk.",
+  "iconURL": "https://raw.githubusercontent.com/redshoxx/StreamFlow-Caster-/main/assets/streamflow-icon.png",
+  "tintColor": "#5B7CFA",
+  "featuredApps": [
+    "com.redshoxx.streamflow"
+  ],
   "apps": [
     {
       "name": "StreamFlow",
       "bundleIdentifier": "com.redshoxx.streamflow",
       "developerName": "redshoxx",
-      "subtitle": "Web media casting controller",
-      "localizedDescription": "StreamFlow casts authorized web and local media to supported receivers.",
-      "iconURL": "https://example.invalid/streamflow-icon.png",
-      "versions": []
+      "subtitle": "Browser, Medienerkennung und Casting",
+      "localizedDescription": "StreamFlow erkennt unterstützte Video- und Audioquellen, überträgt autorisierte Web- und lokale Medien an StreamFlow TV und bietet eine Wiedergabesteuerung im lokalen Netzwerk.",
+      "iconURL": "https://raw.githubusercontent.com/redshoxx/StreamFlow-Caster-/main/assets/streamflow-icon.png",
+      "tintColor": "#5B7CFA",
+      "category": "utilities",
+      "versions": [],
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": {
+          "NSLocalNetworkUsageDescription": "StreamFlow discovers and controls receivers on your local network."
+        }
+      }
     }
   ],
   "news": []

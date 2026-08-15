@@ -20,19 +20,31 @@ class DeviceDiscoveryService {
     await _stopInternal();
     final generation = ++_generation;
     final discovery = BonsoirDiscovery(type: '_streamflow._tcp');
-    await discovery.initialize();
-    if (_disposed || generation != _generation) {
-      await discovery.stop();
-      return;
+    var adopted = false;
+
+    try {
+      await discovery.initialize();
+      if (_disposed || generation != _generation) {
+        await _safeStop(discovery);
+        return;
+      }
+
+      _discovery = discovery;
+      adopted = true;
+      _subscription = discovery.eventStream?.listen(
+        (event) => unawaited(_handleEvent(event, discovery, generation)),
+        onError: (_) {},
+      );
+
+      await discovery.start();
+    } catch (_) {
+      if (adopted && !_disposed && generation == _generation) {
+        await _stopInternal();
+      } else {
+        await _safeStop(discovery);
+      }
+      rethrow;
     }
-    _discovery = discovery;
-
-    _subscription = discovery.eventStream?.listen(
-      (event) => unawaited(_handleEvent(event, discovery, generation)),
-      onError: (_) {},
-    );
-
-    await discovery.start();
   }
 
   Future<void> _handleEvent(
@@ -92,6 +104,12 @@ class DeviceDiscoveryService {
     _controller.add(List.unmodifiable(list));
   }
 
+  Future<void> _safeStop(BonsoirDiscovery discovery) async {
+    try {
+      await discovery.stop();
+    } catch (_) {}
+  }
+
   Future<void> _stopInternal() async {
     _generation += 1;
     final subscription = _subscription;
@@ -100,11 +118,7 @@ class DeviceDiscoveryService {
     _discovery = null;
 
     await subscription?.cancel();
-    if (discovery != null) {
-      try {
-        await discovery.stop();
-      } catch (_) {}
-    }
+    if (discovery != null) await _safeStop(discovery);
     _devices.clear();
     _emit();
   }

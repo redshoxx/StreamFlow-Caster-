@@ -8,7 +8,7 @@ class NsdAdvertiser(context: Context) {
     private val nsd = context.applicationContext.getSystemService(Context.NSD_SERVICE) as NsdManager
     private var listener: NsdManager.RegistrationListener? = null
 
-    fun start(port: Int) {
+    fun start(port: Int, onFailure: (Int) -> Unit = {}) {
         stop()
         val info = NsdServiceInfo().apply {
             serviceName = "StreamFlow TV"
@@ -20,7 +20,14 @@ class NsdAdvertiser(context: Context) {
         }
         val registration = object : NsdManager.RegistrationListener {
             override fun onServiceRegistered(serviceInfo: NsdServiceInfo) = Unit
-            override fun onRegistrationFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = Unit
+
+            override fun onRegistrationFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
+                if (listener === this) {
+                    listener = null
+                    onFailure(errorCode)
+                }
+            }
+
             override fun onServiceUnregistered(serviceInfo: NsdServiceInfo) = Unit
             override fun onUnregistrationFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = Unit
         }

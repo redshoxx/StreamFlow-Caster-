@@ -188,14 +188,34 @@ class AdBlocker {
     }
 
     if (document.documentElement) {
-      const observer = new MutationObserver((mutations) => {
+      const pendingNodes = new Set();
+      let scheduled = false;
+      const flush = () => {
+        scheduled = false;
         let removed = 0;
+        pendingNodes.forEach((node) => {
+          removed += cleanNode(node);
+        });
+        pendingNodes.clear();
+        report(removed);
+      };
+      const scheduleFlush = () => {
+        if (scheduled) return;
+        scheduled = true;
+        if (window.requestAnimationFrame) {
+          window.requestAnimationFrame(flush);
+        } else {
+          window.setTimeout(flush, 16);
+        }
+      };
+
+      const observer = new MutationObserver((mutations) => {
         for (const mutation of mutations) {
           mutation.addedNodes.forEach((node) => {
-            removed += cleanNode(node);
+            if (node instanceof Element) pendingNodes.add(node);
           });
         }
-        report(removed);
+        if (pendingNodes.size) scheduleFlush();
       });
       observer.observe(document.documentElement, {childList: true, subtree: true});
     }
