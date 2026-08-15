@@ -19,6 +19,8 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   final _controller = StreamFlowController();
   var _pageIndex = 0;
+  var _browserEpoch = 0;
+  Uri? _browserLaunchUri;
 
   @override
   void dispose() {
@@ -26,7 +28,15 @@ class _HomeShellState extends State<HomeShell> {
     super.dispose();
   }
 
-  void _openBrowser(Uri? _) => setState(() => _pageIndex = 1);
+  void _openBrowser(Uri? uri) {
+    setState(() {
+      if (uri != null) {
+        _browserLaunchUri = uri;
+        _browserEpoch += 1;
+      }
+      _pageIndex = 1;
+    });
+  }
 
   void _openPage(int index) => setState(() => _pageIndex = index);
 
@@ -45,7 +55,10 @@ class _HomeShellState extends State<HomeShell> {
             children: [
               Text(
                 'Schnellaktion',
-                style: Theme.of(sheetContext).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                style: Theme.of(sheetContext)
+                    .textTheme
+                    .titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w800),
               ),
               const SizedBox(height: 14),
               _QuickSheetTile(
@@ -83,7 +96,10 @@ class _HomeShellState extends State<HomeShell> {
                   Expanded(
                     child: Text(
                       'Adblocker ist im Browser standardmäßig aktiv.',
-                      style: Theme.of(sheetContext).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+                      style: Theme.of(sheetContext)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: colors.onSurfaceVariant),
                     ),
                   ),
                 ],
@@ -108,7 +124,11 @@ class _HomeShellState extends State<HomeShell> {
             onOpenDevices: () => _openPage(4),
             onOpenMedia: () => _openPage(2),
           ),
-          BrowserScreen(controller: _controller),
+          BrowserScreen(
+            key: ValueKey('browser-$_browserEpoch'),
+            controller: _controller,
+            initialUri: _browserLaunchUri,
+          ),
           MediaScreen(controller: _controller),
           FilesScreen(controller: _controller),
           DevicesScreen(controller: _controller),
@@ -210,7 +230,11 @@ class _ModernBottomBar extends StatelessWidget {
                             ),
                           ],
                         ),
-                        child: Icon(Icons.add_rounded, color: colors.onPrimary, size: 30),
+                        child: Icon(
+                          Icons.add_rounded,
+                          color: colors.onPrimary,
+                          size: 30,
+                        ),
                       ),
                     ),
                   ),
@@ -274,7 +298,8 @@ class _NavButton extends StatelessWidget {
                 softWrap: false,
                 style: TextStyle(
                   fontSize: 9.5,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  fontWeight:
+                      selected ? FontWeight.w700 : FontWeight.w500,
                   color: color,
                 ),
               ),
@@ -348,7 +373,11 @@ class _NowPlayingBar extends StatelessWidget {
                   color: colors.primary.withValues(alpha: 0.16),
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: Icon(Icons.cast_connected, color: colors.primary, size: 21),
+                child: Icon(
+                  Icons.cast_connected,
+                  color: colors.primary,
+                  size: 21,
+                ),
               ),
               const SizedBox(width: 11),
               Expanded(
