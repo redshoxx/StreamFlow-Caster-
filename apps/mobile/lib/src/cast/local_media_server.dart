@@ -6,7 +6,7 @@ import 'dart:math';
 import 'package:mime/mime.dart';
 
 class LocalMediaServer {
-  LocalMediaServer({String? advertisedHost}) : _advertisedHost = advertisedHost;
+  LocalMediaServer({this._advertisedHost});
 
   final String? _advertisedHost;
   HttpServer? _server;
