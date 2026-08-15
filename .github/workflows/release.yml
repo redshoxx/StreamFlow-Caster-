@@ -3,6 +3,7 @@ name: Release StreamFlow artifacts
 on:
   push:
     tags: ["v*"]
+    branches: ["release/v*"]
 
 permissions:
   contents: write
@@ -36,7 +37,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${MOBILE_KEYSTORE_BASE64:-}" ] || [ -z "${MOBILE_KEYSTORE_PASSWORD:-}" ] || [ -z "${MOBILE_KEY_ALIAS:-}" ] || [ -z "${MOBILE_KEY_PASSWORD:-}" ]; then
-            echo "Production mobile signing secrets are required for tagged releases."
+            echo "Production mobile signing secrets are required for production releases."
             exit 1
           fi
           echo "$MOBILE_KEYSTORE_BASE64" | base64 --decode > /tmp/streamflow-mobile.jks
@@ -85,7 +86,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${TV_KEYSTORE_BASE64:-}" ] || [ -z "${TV_KEYSTORE_PASSWORD:-}" ] || [ -z "${TV_KEY_ALIAS:-}" ] || [ -z "${TV_KEY_PASSWORD:-}" ]; then
-            echo "Production TV signing secrets are required for tagged releases."
+            echo "Production TV signing secrets are required for production releases."
             exit 1
           fi
 
@@ -159,11 +160,28 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+      - name: Resolve production tag
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            RELEASE_TAG="$GITHUB_REF_NAME"
+          elif [[ "$GITHUB_REF" == refs/heads/release/v* ]]; then
+            RELEASE_TAG="${GITHUB_REF_NAME#release/}"
+          else
+            echo "Unsupported release ref: $GITHUB_REF"
+            exit 1
+          fi
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "Production tag: $RELEASE_TAG"
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.release.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           files: |
             StreamFlow-Mobile-release.apk
             StreamFlow-Mobile-release.apk.sha256
@@ -171,16 +189,22 @@ jobs:
             StreamFlow-TV-release.apk.sha256
             StreamFlow-iOS-unsigned.ipa
             StreamFlow-iOS-unsigned.ipa.sha256
+          fail_on_unmatched_files: true
           generate_release_notes: true
+          make_latest: true
       - name: Update AltStore source metadata
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
           python3 scripts/update-altstore-source.py \
             --source altstore-source.json \
             --ipa StreamFlow-iOS-unsigned.ipa \
-            --tag "$GITHUB_REF_NAME" \
+            --tag "$RELEASE_TAG" \
             --repository "$GITHUB_REPOSITORY"
           python3 -m json.tool altstore-source.json >/dev/null
       - name: Publish AltStore source metadata
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -190,5 +214,5 @@ jobs:
             echo "AltStore source already contains this build."
             exit 0
           fi
-          git commit -m "Publish AltStore metadata for $GITHUB_REF_NAME"
+          git commit -m "Publish AltStore metadata for $RELEASE_TAG"
           git push origin HEAD:main
