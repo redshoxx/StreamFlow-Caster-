@@ -1,10 +1,15 @@
-name: iOS unsigned build
+name: iOS AltStore IPA
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "apps/mobile/**"
+      - ".github/workflows/ios-check.yml"
 
 jobs:
-  ios:
+  ipa:
     runs-on: macos-latest
     defaults:
       run:
@@ -15,6 +20,33 @@ jobs:
         with:
           channel: stable
           cache: true
-      - run: flutter create --platforms=ios --org com.redshoxx --project-name streamflow .
-      - run: flutter pub get
-      - run: flutter build ios --release --no-codesign
+      - name: Create iOS platform project
+        run: flutter create --platforms=ios --org com.redshoxx --project-name streamflow .
+      - name: Configure local-network permissions
+        run: |
+          PLIST="ios/Runner/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :NSLocalNetworkUsageDescription string StreamFlow discovers and controls receivers on your local network." "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Add :NSBonjourServices array" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Add :NSBonjourServices:0 string _streamflow._tcp" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" "$PLIST" || true
+      - name: Resolve packages
+        run: flutter pub get
+      - name: Build unsigned iOS app
+        run: flutter build ios --release --no-codesign
+      - name: Package IPA for AltStore signing
+        run: |
+          rm -rf ../../dist
+          mkdir -p ../../dist/Payload
+          cp -R build/ios/iphoneos/Runner.app ../../dist/Payload/Runner.app
+          cd ../../dist
+          /usr/bin/zip -qry StreamFlow-iOS-unsigned.ipa Payload
+          rm -rf Payload
+          shasum -a 256 StreamFlow-iOS-unsigned.ipa > StreamFlow-iOS-unsigned.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: StreamFlow-iOS-AltStore
+          path: |
+            dist/StreamFlow-iOS-unsigned.ipa
+            dist/StreamFlow-iOS-unsigned.sha256
+          if-no-files-found: error
