@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - "apps/mobile/**"
+      - "scripts/configure-mobile-android.py"
       - ".github/workflows/android-mobile.yml"
 
 jobs:
@@ -23,6 +24,8 @@ jobs:
           cache: true
       - name: Create Android platform project
         run: flutter create --platforms=android --org com.redshoxx --project-name streamflow .
+      - name: Configure Android LAN networking
+        run: python3 ../../scripts/configure-mobile-android.py android/app/src/main/AndroidManifest.xml
       - name: Resolve packages
         run: flutter pub get
       - name: Build optimized APK
