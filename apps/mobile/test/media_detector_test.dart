@@ -15,6 +15,23 @@ void main() {
     expect(media!.kind, MediaKind.video);
   });
 
+  test('detects dynamic video endpoint from synthetic media hint', () {
+    final media = MediaDetector.fromUrl(
+      'https://cdn.example.com/playback?id=42',
+      mime: 'streamflow/video',
+    );
+    expect(media, isNotNull);
+    expect(media!.kind, MediaKind.video);
+  });
+
+  test('detects HLS from content type query', () {
+    final media = MediaDetector.fromUrl(
+      'https://cdn.example.com/playlist?id=42&content_type=application/vnd.apple.mpegurl',
+    );
+    expect(media, isNotNull);
+    expect(media!.kind, MediaKind.hls);
+  });
+
   test('rejects non-http URLs', () {
     expect(MediaDetector.fromUrl('file:///tmp/video.mp4'), isNull);
   });
