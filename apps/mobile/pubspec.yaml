@@ -1,7 +1,7 @@
 name: streamflow
 description: StreamFlow release browser and universal cast controller.
 publish_to: "none"
-version: 1.0.1+11
+version: 1.1.0+12
 
 environment:
   sdk: ">=3.12.0 <4.0.0"
