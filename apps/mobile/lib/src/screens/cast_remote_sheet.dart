@@ -7,6 +7,7 @@ import '../app/streamflow_controller.dart';
 import '../cast/receiver_client.dart';
 import '../models/cast_device.dart';
 import '../models/detected_media.dart';
+import 'airplay_cast_sheet.dart';
 import 'dlna_remote_sheet.dart';
 import 'google_cast_remote_sheet.dart';
 
@@ -45,6 +46,8 @@ Future<void> showCastRemoteSheet(
       );
       break;
     case CastProtocol.airPlay:
+      await showAirPlayCastSheet(context, media);
+      controller.endCasting();
       return;
   }
 
