@@ -15,6 +15,7 @@ REQUIRED_PERMISSIONS = (
     "android.permission.INTERNET",
     "android.permission.ACCESS_NETWORK_STATE",
     "android.permission.CHANGE_WIFI_MULTICAST_STATE",
+    "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
 )
 
 APP_ICON = '''<?xml version="1.0" encoding="utf-8"?>
@@ -33,6 +34,41 @@ APP_ICON = '''<?xml version="1.0" encoding="utf-8"?>
 '''
 
 
+def _android_attr(name: str) -> str:
+    return f"{ANDROID}{name}"
+
+
+def _ensure_permission(root: ET.Element, application_index: int, name: str, **attrs: str) -> int:
+    for element in root.findall("uses-permission"):
+        if element.get(_android_attr("name")) == name:
+            for key, value in attrs.items():
+                element.set(_android_attr(key), value)
+            return application_index
+
+    attributes = {_android_attr("name"): name}
+    attributes.update({_android_attr(key): value for key, value in attrs.items()})
+    root.insert(application_index, ET.Element("uses-permission", attributes))
+    return application_index + 1
+
+
+def _ensure_application_child(
+    application: ET.Element,
+    tag: str,
+    android_name: str,
+    attributes: dict[str, str],
+) -> ET.Element:
+    for child in application.findall(tag):
+        if child.get(_android_attr("name")) == android_name:
+            for key, value in attributes.items():
+                child.set(_android_attr(key), value)
+            return child
+
+    values = {_android_attr("name"): android_name}
+    values.update({_android_attr(key): value for key, value in attributes.items()})
+    child = ET.SubElement(application, tag, values)
+    return child
+
+
 def configure(path: Path) -> None:
     if not path.is_file():
         raise SystemExit(f"AndroidManifest.xml not found: {path}")
@@ -43,29 +79,44 @@ def configure(path: Path) -> None:
     if application is None:
         raise SystemExit("Generated Android manifest has no <application> element")
 
-    existing_permissions = {
-        element.get(f"{ANDROID}name")
-        for element in root.findall("uses-permission")
-    }
     application_index = list(root).index(application)
-
     for permission in REQUIRED_PERMISSIONS:
-        if permission in existing_permissions:
-            continue
-        element = ET.Element(
-            "uses-permission",
-            {f"{ANDROID}name": permission},
+        application_index = _ensure_permission(
+            root,
+            application_index,
+            permission,
         )
-        root.insert(application_index, element)
-        application_index += 1
 
-    application.set(f"{ANDROID}label", "StreamFlow")
-    application.set(f"{ANDROID}allowBackup", "false")
-    application.set(f"{ANDROID}icon", "@drawable/streamflow_app_icon")
-    application.set(f"{ANDROID}roundIcon", "@drawable/streamflow_app_icon")
-    # StreamFlow talks to its authenticated receiver and temporary media server
-    # over HTTP on the private LAN. Public web browsing remains HTTPS-first.
-    application.set(f"{ANDROID}usesCleartextTraffic", "true")
+    application_index = _ensure_permission(
+        root,
+        application_index,
+        "android.permission.NEARBY_WIFI_DEVICES",
+        usesPermissionFlags="neverForLocation",
+    )
+
+    application.set(_android_attr("label"), "StreamFlow")
+    application.set(_android_attr("allowBackup"), "false")
+    application.set(_android_attr("icon"), "@drawable/streamflow_app_icon")
+    application.set(_android_attr("roundIcon"), "@drawable/streamflow_app_icon")
+    # StreamFlow talks to its authenticated receiver, DLNA renderers and temporary
+    # local media server over HTTP on the private LAN. Public browsing remains HTTPS-first.
+    application.set(_android_attr("usesCleartextTraffic"), "true")
+
+    _ensure_application_child(
+        application,
+        "meta-data",
+        "com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME",
+        {"value": "com.felnanuke.google_cast.GoogleCastOptionsProvider"},
+    )
+    _ensure_application_child(
+        application,
+        "service",
+        "com.google.android.gms.cast.framework.media.MediaNotificationService",
+        {
+            "exported": "false",
+            "foregroundServiceType": "mediaPlayback",
+        },
+    )
 
     drawable = path.parent / "res" / "drawable"
     drawable.mkdir(parents=True, exist_ok=True)
