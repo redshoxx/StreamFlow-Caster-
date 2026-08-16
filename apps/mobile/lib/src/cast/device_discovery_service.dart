@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:bonsoir/bonsoir.dart';
 
@@ -37,21 +38,24 @@ class DeviceDiscoveryService {
       },
       onError: (_) {},
     );
-    _dlnaSubscription ??= DlnaCastService.instance.devices.listen(
-      (devices) {
-        if (_disposed) return;
-        _dlnaDevices
-          ..clear()
-          ..addEntries(devices.map((device) => MapEntry(device.id, device)));
-        _emit();
-      },
-      onError: (_) {},
-    );
+
+    if (Platform.isAndroid) {
+      _dlnaSubscription ??= DlnaCastService.instance.devices.listen(
+        (devices) {
+          if (_disposed) return;
+          _dlnaDevices
+            ..clear()
+            ..addEntries(devices.map((device) => MapEntry(device.id, device)));
+          _emit();
+        },
+        onError: (_) {},
+      );
+    }
 
     final starts = <Future<void>>[
       _startStreamFlow(generation),
       GoogleCastService.instance.initialize(),
-      DlnaCastService.instance.restart(),
+      if (Platform.isAndroid) DlnaCastService.instance.restart(),
     ];
 
     Object? firstError;
@@ -189,7 +193,7 @@ class DeviceDiscoveryService {
     _generation += 1;
     await _stopStreamFlow();
     if (clearExternal) {
-      await DlnaCastService.instance.stopDiscovery();
+      if (Platform.isAndroid) await DlnaCastService.instance.stopDiscovery();
       _googleDevices.clear();
       _dlnaDevices.clear();
     }
