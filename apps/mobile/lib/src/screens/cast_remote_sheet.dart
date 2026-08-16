@@ -7,6 +7,8 @@ import '../app/streamflow_controller.dart';
 import '../cast/receiver_client.dart';
 import '../models/cast_device.dart';
 import '../models/detected_media.dart';
+import 'dlna_remote_sheet.dart';
+import 'google_cast_remote_sheet.dart';
 
 Future<void> showCastRemoteSheet(
   BuildContext context,
@@ -14,23 +16,44 @@ Future<void> showCastRemoteSheet(
 ) async {
   final device = controller.activeDevice;
   final media = controller.activeMedia;
-  final pairingCode = controller.activePairingCode;
-  if (device == null || media == null || pairingCode == null) return;
+  if (device == null || media == null) return;
+
+  final Widget sheet;
+  switch (device.protocol) {
+    case CastProtocol.streamFlow:
+      final pairingCode = controller.activePairingCode;
+      if (pairingCode == null) return;
+      sheet = CastRemoteSheet(
+        controller: controller,
+        device: device,
+        media: media,
+        pairingCode: pairingCode,
+      );
+      break;
+    case CastProtocol.googleCast:
+      sheet = GoogleCastRemoteSheet(
+        controller: controller,
+        device: device,
+        media: media,
+      );
+      break;
+    case CastProtocol.dlna:
+      sheet = DlnaRemoteSheet(
+        controller: controller,
+        device: device,
+        media: media,
+      );
+      break;
+    case CastProtocol.airPlay:
+      return;
+  }
 
   await showModalBottomSheet<void>(
     context: context,
     useSafeArea: true,
     isScrollControlled: true,
     showDragHandle: true,
-    builder: (_) => FractionallySizedBox(
-      heightFactor: 0.82,
-      child: CastRemoteSheet(
-        controller: controller,
-        device: device,
-        media: media,
-        pairingCode: pairingCode,
-      ),
-    ),
+    builder: (_) => FractionallySizedBox(heightFactor: 0.82, child: sheet),
   );
 }
 
