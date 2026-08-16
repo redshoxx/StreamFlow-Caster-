@@ -143,14 +143,23 @@ class DeviceDiscoveryService {
       (address) => !address.contains(':'),
       orElse: () => service.hostAddresses.first,
     );
+    final discoveredName = service.name.trim();
+    final normalizedName = discoveredName.toLowerCase();
+    final isFireTv = normalizedName.contains('fire tv') ||
+        RegExp(r'(^|[^a-z])aft[a-z0-9]*', caseSensitive: false)
+            .hasMatch(discoveredName);
 
     _streamFlowDevices[service.name] = CastDevice(
       id: service.name,
-      name: service.name,
+      name: discoveredName.isEmpty
+          ? (isFireTv ? 'Fire TV' : 'StreamFlow TV')
+          : discoveredName,
       host: host,
       port: service.port,
       protocol: CastProtocol.streamFlow,
-      modelName: 'StreamFlow TV Receiver',
+      modelName: isFireTv
+          ? 'Amazon Fire TV • StreamFlow Receiver'
+          : 'StreamFlow TV Receiver',
     );
     _emit();
   }
