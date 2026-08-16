@@ -16,11 +16,11 @@ import '../storage/receiver_credential_store.dart';
 class CastMediaDialog extends StatefulWidget {
   const CastMediaDialog({
     super.key,
-    required this.media,
+    this.media,
     this.preferredDeviceId,
   });
 
-  final DetectedMedia media;
+  final DetectedMedia? media;
   final String? preferredDeviceId;
 
   @override
@@ -36,6 +36,8 @@ class _CastMediaDialogState extends State<CastMediaDialog> {
   String? _error;
   String? _connectingId;
   var _scanning = true;
+
+  bool get _selectionOnly => widget.media == null;
 
   @override
   void initState() {
@@ -88,16 +90,21 @@ class _CastMediaDialogState extends State<CastMediaDialog> {
     });
 
     try {
+      final media = widget.media;
       switch (device.protocol) {
         case CastProtocol.streamFlow:
           await _castStreamFlow(device);
           break;
         case CastProtocol.googleCast:
-          await GoogleCastService.instance.load(device, widget.media);
+          if (media != null) {
+            await GoogleCastService.instance.load(device, media);
+          }
           if (mounted) Navigator.of(context).pop(CastTarget(device: device));
           break;
         case CastProtocol.dlna:
-          await DlnaCastService.instance.load(device, widget.media);
+          if (media != null) {
+            await DlnaCastService.instance.load(device, media);
+          }
           if (mounted) Navigator.of(context).pop(CastTarget(device: device));
           break;
         case CastProtocol.airPlay:
@@ -116,7 +123,9 @@ class _CastMediaDialogState extends State<CastMediaDialog> {
       if (mounted) {
         setState(() {
           _connectingId = null;
-          _error = '${device.name} konnte den Stream nicht laden.';
+          _error = _selectionOnly
+              ? '${device.name} konnte nicht verbunden werden.'
+              : '${device.name} konnte den Stream nicht laden.';
         });
       }
     }
@@ -135,12 +144,15 @@ class _CastMediaDialogState extends State<CastMediaDialog> {
       return;
     }
 
-    await _client.load(
-      device,
-      widget.media.url,
-      title: widget.media.displayName,
-      pairingCode: pairingCode,
-    );
+    final media = widget.media;
+    if (media != null) {
+      await _client.load(
+        device,
+        media.url,
+        title: media.displayName,
+        pairingCode: pairingCode,
+      );
+    }
     if (mounted) {
       Navigator.of(context).pop(
         CastTarget(device: device, pairingCode: pairingCode),
@@ -201,8 +213,10 @@ class _CastMediaDialogState extends State<CastMediaDialog> {
                   label: const Text('Adresse kopieren'),
                 ),
                 const SizedBox(height: 8),
-                const Text(
-                  'Sobald auf dem TV „StreamFlow Web Receiver – Bereit“ angezeigt wird, tippe unten auf „Übertragen“.',
+                Text(
+                  _selectionOnly
+                      ? 'Sobald auf dem TV „StreamFlow Web Receiver – Bereit“ angezeigt wird, tippe unten auf „Verbinden“.'
+                      : 'Sobald auf dem TV „StreamFlow Web Receiver – Bereit“ angezeigt wird, tippe unten auf „Übertragen“.',
                 ),
               ],
             ),
@@ -214,8 +228,8 @@ class _CastMediaDialogState extends State<CastMediaDialog> {
             ),
             FilledButton.icon(
               onPressed: () => Navigator.of(dialogContext).pop(true),
-              icon: const Icon(Icons.cast_rounded),
-              label: const Text('Übertragen'),
+              icon: Icon(_selectionOnly ? Icons.link_rounded : Icons.cast_rounded),
+              label: Text(_selectionOnly ? 'Verbinden' : 'Übertragen'),
             ),
           ],
         ),
@@ -227,12 +241,15 @@ class _CastMediaDialogState extends State<CastMediaDialog> {
         return;
       }
 
-      await _client.load(
-        session.device,
-        widget.media.url,
-        title: widget.media.displayName,
-        pairingCode: session.pairingCode,
-      );
+      final media = widget.media;
+      if (media != null) {
+        await _client.load(
+          session.device,
+          media.url,
+          title: media.displayName,
+          pairingCode: session.pairingCode,
+        );
+      }
       if (mounted) {
         Navigator.of(context).pop(
           CastTarget(
@@ -393,8 +410,8 @@ class _CastMediaDialogState extends State<CastMediaDialog> {
                 : null,
             icon: const Icon(Icons.arrow_back_ios_new_rounded),
           ),
-          title: const Text(
-            'Gerät zum Übertragen wählen',
+          title: Text(
+            _selectionOnly ? 'Mit TV verbinden' : 'Gerät zum Übertragen wählen',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -433,15 +450,25 @@ class _CastMediaDialogState extends State<CastMediaDialog> {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(18, 18, 18, 32),
                 children: [
-                  Text(
-                    widget.media.displayName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: colors.onSurfaceVariant,
+                  if (widget.media case final media?) ...[
+                    Text(
+                      media.displayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: colors.onSurfaceVariant,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 18),
+                    const SizedBox(height: 18),
+                  ] else ...[
+                    Text(
+                      'Wähle den Fernseher jetzt aus. Sobald StreamFlow danach eine Videoquelle erkennt, kann sie direkt auf dieses Gerät übertragen werden.',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                  ],
                   if (_devices.isNotEmpty) ...[
                     Text(
                       'In deinem Netzwerk',
