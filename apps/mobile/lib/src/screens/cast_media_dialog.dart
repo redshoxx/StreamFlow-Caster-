@@ -8,6 +8,7 @@ import '../cast/device_discovery_service.dart';
 import '../cast/dlna_cast_service.dart';
 import '../cast/google_cast_service.dart';
 import '../cast/receiver_client.dart';
+import '../cast/web_receiver_server.dart';
 import '../models/cast_device.dart';
 import '../models/detected_media.dart';
 import '../storage/receiver_credential_store.dart';
@@ -42,25 +43,37 @@ class _CastMediaDialogState extends State<CastMediaDialog> {
     _subscription = _discovery.devices.listen((devices) {
       final sorted = [...devices];
       final preferred = widget.preferredDeviceId;
-      if (preferred != null) {
-        sorted.sort((a, b) {
+      sorted.sort((a, b) {
+        if (preferred != null) {
           if (a.id == preferred && b.id != preferred) return -1;
           if (b.id == preferred && a.id != preferred) return 1;
-          final protocol = a.protocol.index.compareTo(b.protocol.index);
-          return protocol != 0 ? protocol : a.name.compareTo(b.name);
-        });
-      }
+        }
+        final aFire = _isFireTv(a);
+        final bFire = _isFireTv(b);
+        if (aFire != bFire) return aFire ? -1 : 1;
+        final protocol = a.protocol.index.compareTo(b.protocol.index);
+        return protocol != 0 ? protocol : a.name.compareTo(b.name);
+      });
       if (mounted) setState(() => _devices = sorted);
     });
     unawaited(_start());
   }
 
   Future<void> _start() async {
+    if (mounted) {
+      setState(() {
+        _scanning = true;
+        _error = null;
+      });
+    }
     try {
       await _discovery.start();
     } catch (_) {
       if (mounted && _devices.isEmpty) {
-        setState(() => _error = 'Gerätesuche konnte nicht vollständig gestartet werden.');
+        setState(() {
+          _error =
+              'Die Gerätesuche konnte nicht vollständig gestartet werden. Prüfe, ob lokales Netzwerk/WLAN für StreamFlow erlaubt ist.';
+        });
       }
     } finally {
       if (mounted) setState(() => _scanning = false);
@@ -135,6 +148,109 @@ class _CastMediaDialogState extends State<CastMediaDialog> {
     }
   }
 
+  Future<void> _openWebReceiver() async {
+    if (_connectingId != null) return;
+    setState(() {
+      _connectingId = 'web-browser-receiver';
+      _error = null;
+    });
+
+    try {
+      final session = await WebReceiverServer.instance.start();
+      if (!mounted) return;
+
+      final proceed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+          icon: const Icon(Icons.language_rounded),
+          title: const Text('Webbrowser-Empfänger'),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'Öffne auf dem Fernseher einen Webbrowser und rufe diese Adresse auf. Smartphone und TV müssen im selben Netzwerk sein.',
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: SelectableText(
+                    session.receiverUrl.toString(),
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextButton.icon(
+                  onPressed: () async {
+                    await Clipboard.setData(
+                      ClipboardData(text: session.receiverUrl.toString()),
+                    );
+                    if (!dialogContext.mounted) return;
+                    ScaffoldMessenger.of(dialogContext).showSnackBar(
+                      const SnackBar(content: Text('Empfänger-Adresse kopiert.')),
+                    );
+                  },
+                  icon: const Icon(Icons.copy_rounded),
+                  label: const Text('Adresse kopieren'),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Sobald auf dem TV „StreamFlow Web Receiver – Bereit“ angezeigt wird, tippe unten auf „Übertragen“.',
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Abbrechen'),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              icon: const Icon(Icons.cast_rounded),
+              label: const Text('Übertragen'),
+            ),
+          ],
+        ),
+      );
+
+      if (!mounted) return;
+      if (proceed != true) {
+        setState(() => _connectingId = null);
+        return;
+      }
+
+      await _client.load(
+        session.device,
+        widget.media.url,
+        title: widget.media.displayName,
+        pairingCode: session.pairingCode,
+      );
+      if (mounted) {
+        Navigator.of(context).pop(
+          CastTarget(
+            device: session.device,
+            pairingCode: session.pairingCode,
+          ),
+        );
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _connectingId = null;
+        _error =
+            'Der Webbrowser-Empfänger konnte nicht gestartet werden. Prüfe WLAN und lokale Netzwerkberechtigungen.';
+      });
+    }
+  }
+
   Future<String?> _resolvePairingCode(CastDevice device) async {
     final saved = await _credentials.load(device.id);
     if (saved != null) {
@@ -159,7 +275,8 @@ class _CastMediaDialogState extends State<CastMediaDialog> {
       } on ReceiverException catch (error) {
         if (!error.isPairingRequired) rethrow;
         if (mounted) {
-          setState(() => _error = 'Kopplungscode falsch. Prüfe den Code am Fernseher.');
+          setState(() => _error =
+              'Kopplungscode falsch. Prüfe den Code am Fernseher.');
         }
       }
     }
@@ -195,7 +312,9 @@ class _CastMediaDialogState extends State<CastMediaDialog> {
                   ],
                   onChanged: (_) => setDialogState(() {}),
                   onSubmitted: (value) {
-                    if (value.length == 8) Navigator.of(dialogContext).pop(value);
+                    if (value.length == 8) {
+                      Navigator.of(dialogContext).pop(value);
+                    }
                   },
                   decoration: const InputDecoration(
                     labelText: 'Kopplungscode',
@@ -226,6 +345,25 @@ class _CastMediaDialogState extends State<CastMediaDialog> {
     }
   }
 
+  Future<void> _showReceiverHelp() async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: const Icon(Icons.tv_rounded),
+        title: const Text('StreamFlow TV Empfänger'),
+        content: const Text(
+          'Installiere und öffne die StreamFlow TV Receiver-App auf Fire TV, Android TV oder Google TV. Sobald der Receiver geöffnet ist und sich im selben Netzwerk befindet, erscheint er automatisch oben in der Geräteliste.',
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _subscription?.cancel();
@@ -236,95 +374,185 @@ class _CastMediaDialogState extends State<CastMediaDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
     final airPlayDevice = const CastDevice(
       id: 'airplay-system-picker',
-      name: 'AirPlay',
+      name: 'AirPlay auf Apple TV',
       protocol: CastProtocol.airPlay,
-      modelName: 'Apple Systemauswahl',
+      modelName: 'Apple-Systemauswahl',
     );
 
-    return AlertDialog(
-      icon: const Icon(Icons.cast_rounded),
-      title: const Text('Auf Gerät abspielen'),
-      content: SizedBox(
-        width: 440,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              widget.media.displayName,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
+    return Dialog.fullscreen(
+      child: Scaffold(
+        appBar: AppBar(
+          leading: IconButton(
+            tooltip: 'Schließen',
+            onPressed: _connectingId == null
+                ? () => Navigator.of(context).pop()
+                : null,
+            icon: const Icon(Icons.arrow_back_ios_new_rounded),
+          ),
+          title: const Text(
+            'Gerät zum Übertragen wählen',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          actions: [
+            IconButton(
+              tooltip: 'Neu suchen',
+              onPressed: _connectingId == null && !_scanning ? _start : null,
+              icon: const Icon(Icons.refresh_rounded),
             ),
-            const SizedBox(height: 12),
+          ],
+        ),
+        body: Column(
+          children: [
             if (_error != null)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Text(
-                  _error!,
-                  style: TextStyle(color: colors.error),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            if (_scanning)
-              const Padding(
-                padding: EdgeInsets.only(bottom: 10),
-                child: LinearProgressIndicator(),
-              ),
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 360),
-              child: ListView(
-                shrinkWrap: true,
-                children: [
-                  if (Platform.isIOS) _deviceTile(airPlayDevice),
-                  ..._devices.map(_deviceTile),
-                  if (_devices.isEmpty && !Platform.isIOS && !_scanning)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 24),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+                color: colors.errorContainer,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.warning_amber_rounded,
+                        color: colors.onErrorContainer),
+                    const SizedBox(width: 12),
+                    Expanded(
                       child: Text(
-                        'Keine kompatiblen Geräte gefunden. Prüfe, ob Smartphone und Fernseher im selben Netzwerk sind.',
-                        textAlign: TextAlign.center,
+                        _error!,
+                        style: TextStyle(color: colors.onErrorContainer),
                       ),
                     ),
+                  ],
+                ),
+              ),
+            if (_scanning) const LinearProgressIndicator(minHeight: 2),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(18, 18, 18, 32),
+                children: [
+                  Text(
+                    widget.media.displayName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: colors.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  if (_devices.isNotEmpty) ...[
+                    Text(
+                      'In deinem Netzwerk',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ..._devices.map(_deviceTile),
+                    const SizedBox(height: 20),
+                  ] else if (!_scanning) ...[
+                    Container(
+                      padding: const EdgeInsets.all(18),
+                      decoration: BoxDecoration(
+                        color: colors.surfaceContainerHigh,
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      child: const Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.wifi_find_rounded),
+                          SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'Noch kein kompatibles Gerät gefunden. Lass den TV-Empfänger geöffnet und prüfe, ob Smartphone und TV im selben WLAN/LAN sind.',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                  ],
+                  Text(
+                    'Weitere Empfänger',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  _actionTile(
+                    icon: Icons.local_fire_department_outlined,
+                    title: 'Fire TV / Android TV',
+                    subtitle:
+                        'Über die StreamFlow TV Receiver-App. Danach erscheint das Gerät automatisch oben.',
+                    onTap: _showReceiverHelp,
+                  ),
+                  _actionTile(
+                    icon: Icons.language_rounded,
+                    title: 'Webbrowser-Empfänger',
+                    subtitle:
+                        'Direkt über den Webbrowser des Fernsehers übertragen – ohne zusätzliche TV-App.',
+                    onTap: _openWebReceiver,
+                    loading: _connectingId == 'web-browser-receiver',
+                  ),
+                  if (Platform.isIOS) _deviceTile(airPlayDevice),
+                  const SizedBox(height: 22),
+                  Text(
+                    'StreamFlow erkennt StreamFlow TV/Fire TV Receiver, Google Cast und kompatible DLNA/UPnP-Geräte automatisch. AirPlay nutzt auf dem iPhone die Apple-Systemauswahl.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: colors.onSurfaceVariant,
+                    ),
+                  ),
                 ],
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'StreamFlow erkennt Receiver, Chromecast/Google Cast und DLNA automatisch. AirPlay nutzt auf dem iPhone die Apple-Systemauswahl.',
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: colors.onSurfaceVariant,
-                  ),
             ),
           ],
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: _connectingId == null ? () => Navigator.of(context).pop() : null,
-          child: const Text('Abbrechen'),
-        ),
-      ],
     );
   }
 
   Widget _deviceTile(CastDevice device) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
     final preferred = device.id == widget.preferredDeviceId;
+    final endpoint = device.host.trim().isNotEmpty ? device.host.trim() : null;
+    final subtitleParts = <String>[
+      if (preferred) 'Bevorzugtes Gerät' else device.protocol.label,
+      if (device.modelName?.trim().isNotEmpty == true) device.modelName!.trim(),
+      if (endpoint != null) endpoint,
+    ];
+
     return Card(
+      margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(
-        leading: CircleAvatar(child: Icon(_protocolIcon(device.protocol))),
-        title: Text(device.name),
-        subtitle: Text(
-          preferred
-              ? '${device.protocol.label} • Bevorzugtes Gerät'
-              : device.modelName?.trim().isNotEmpty == true
-                  ? '${device.protocol.label} • ${device.modelName}'
-                  : device.protocol.label,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+        leading: Container(
+          width: 48,
+          height: 48,
+          decoration: BoxDecoration(
+            color: _isFireTv(device)
+                ? colors.tertiaryContainer
+                : colors.primaryContainer,
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Icon(
+            _protocolIcon(device),
+            color: _isFireTv(device)
+                ? colors.onTertiaryContainer
+                : colors.onPrimaryContainer,
+          ),
+        ),
+        title: Text(
+          device.name,
           maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        subtitle: Text(
+          subtitleParts.join(' • '),
+          maxLines: 2,
           overflow: TextOverflow.ellipsis,
         ),
         trailing: _connectingId == device.id
@@ -332,17 +560,52 @@ class _CastMediaDialogState extends State<CastMediaDialog> {
                 dimension: 22,
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
-            : const Icon(Icons.play_arrow_rounded),
+            : const Icon(Icons.chevron_right_rounded),
         enabled: _connectingId == null,
         onTap: () => _cast(device),
       ),
     );
   }
 
-  IconData _protocolIcon(CastProtocol protocol) => switch (protocol) {
-        CastProtocol.streamFlow => Icons.tv_rounded,
-        CastProtocol.googleCast => Icons.cast_rounded,
-        CastProtocol.dlna => Icons.connected_tv_rounded,
-        CastProtocol.airPlay => Icons.airplay_rounded,
-      };
+  Widget _actionTile({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required Future<void> Function() onTap,
+    bool loading = false,
+  }) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+        leading: CircleAvatar(child: Icon(icon)),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+        subtitle: Text(subtitle),
+        trailing: loading
+            ? const SizedBox.square(
+                dimension: 22,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.chevron_right_rounded),
+        enabled: _connectingId == null,
+        onTap: () => unawaited(onTap()),
+      ),
+    );
+  }
+
+  bool _isFireTv(CastDevice device) {
+    final text = '${device.name} ${device.modelName ?? ''}'.toLowerCase();
+    return text.contains('fire tv') ||
+        RegExp(r'(^|[^a-z])aft[a-z0-9]*', caseSensitive: false).hasMatch(text);
+  }
+
+  IconData _protocolIcon(CastDevice device) {
+    if (_isFireTv(device)) return Icons.local_fire_department_rounded;
+    return switch (device.protocol) {
+      CastProtocol.streamFlow => Icons.tv_rounded,
+      CastProtocol.googleCast => Icons.cast_rounded,
+      CastProtocol.dlna => Icons.connected_tv_rounded,
+      CastProtocol.airPlay => Icons.airplay_rounded,
+    };
+  }
 }
