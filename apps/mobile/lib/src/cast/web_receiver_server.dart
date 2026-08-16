@@ -198,13 +198,17 @@ class WebReceiverServer {
 
       _json(request.response, HttpStatus.notFound, {'error': 'not_found'});
     } catch (_) {
-      if (!request.response.headersSent) {
-        _json(request.response, HttpStatus.internalServerError, {
-          'error': 'receiver_server_error',
-        });
-      } else {
+      // A handler may fail before or after a response has started. Dart's
+      // HttpResponse intentionally exposes no headers-sent flag, so teardown
+      // must be race-safe in both states.
+      try {
+        request.response.statusCode = HttpStatus.internalServerError;
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({'error': 'receiver_server_error'}));
+      } catch (_) {}
+      try {
         await request.response.close();
-      }
+      } catch (_) {}
     }
   }
 
