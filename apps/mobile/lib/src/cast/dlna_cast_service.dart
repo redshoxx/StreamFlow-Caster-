@@ -25,7 +25,7 @@ class DlnaPermissionException implements Exception {
   const DlnaPermissionException();
 
   @override
-  String toString() => 'Nearby Wi-Fi permission is required for DLNA discovery.';
+  String toString() => 'Local network permission is required for DLNA discovery.';
 }
 
 class DlnaCastService {
@@ -49,10 +49,7 @@ class DlnaCastService {
     _starting = true;
     final discoverer = DeviceDiscoverer();
     try {
-      await _ensureAndroidPermission();
-      await discoverer.start(
-        addressTypes: const [InternetAddressType.IPv4],
-      );
+      await _startDiscoverer(discoverer);
       _discoverer = discoverer;
       _subscription = discoverer.devices.listen(
         _upsert,
@@ -74,10 +71,32 @@ class DlnaCastService {
     }
   }
 
-  Future<void> _ensureAndroidPermission() async {
-    if (!Platform.isAndroid) return;
-    final status = await Permission.nearbyWifiDevices.request();
-    if (!status.isGranted) throw const DlnaPermissionException();
+  Future<void> _startDiscoverer(DeviceDiscoverer discoverer) async {
+    try {
+      await discoverer.start(
+        addressTypes: const [InternetAddressType.IPv4],
+      );
+    } on SocketException catch (error) {
+      // Raw SSDP sockets work without a nearby-device runtime prompt on
+      // Android 12 and older. Newer Android local-network restrictions can
+      // reject multicast sockets with EPERM/EACCES; only then request the
+      // newer nearby-Wi-Fi permission and retry.
+      if (!Platform.isAndroid || !_isPermissionSocketError(error)) rethrow;
+      final status = await Permission.nearbyWifiDevices.request();
+      if (!status.isGranted) throw const DlnaPermissionException();
+      await discoverer.start(
+        addressTypes: const [InternetAddressType.IPv4],
+      );
+    }
+  }
+
+  bool _isPermissionSocketError(SocketException error) {
+    final code = error.osError?.errorCode;
+    if (code == 1 || code == 13) return true; // EPERM / EACCES
+    final message = '${error.message} ${error.osError?.message ?? ''}'
+        .toLowerCase();
+    return message.contains('operation not permitted') ||
+        message.contains('permission denied');
   }
 
   void _upsert(Device device) {
