@@ -81,6 +81,9 @@ class BrowserTabSession {
   bool disposed = false;
   int progress = 0;
   int blockedAds = 0;
+  int mediaIntentSerial = 0;
+  int mediaDetectionSerial = 0;
+  DateTime? lastMediaIntentAt;
   int _pageGeneration = 0;
   String pageTitle = 'Neuer Tab';
   Uri? currentUri;
@@ -121,12 +124,34 @@ class BrowserTabSession {
     try {
       final decoded = jsonDecode(message.message);
       if (decoded is! Map) return;
+      if (decoded['event']?.toString() == 'intent') {
+        lastMediaIntentAt = DateTime.now();
+        mediaIntentSerial += 1;
+        _notify();
+        _scheduleIntentScans();
+        return;
+      }
       _capture(
         decoded['url']?.toString() ?? '',
         label: decoded['label']?.toString(),
         mime: decoded['type']?.toString(),
       );
     } catch (_) {}
+  }
+
+  void _scheduleIntentScans() {
+    final generation = _pageGeneration;
+    unawaited(scan(expectedGeneration: generation));
+    for (final delay in const [80, 250, 700, 1500, 3000]) {
+      _injectionTimers.add(
+        Timer(Duration(milliseconds: delay), () {
+          if (!disposed && generation == _pageGeneration) {
+            unawaited(scan(expectedGeneration: generation));
+            unawaited(_injectHooks());
+          }
+        }),
+      );
+    }
   }
 
   void _onPageStarted(String url) {
@@ -141,6 +166,9 @@ class BrowserTabSession {
     progress = 0;
     blockedAds = 0;
     pageMedia.clear();
+    lastMediaIntentAt = null;
+    mediaIntentSerial = 0;
+    mediaDetectionSerial = 0;
     pageTitle = uri?.host.isNotEmpty == true ? uri!.host : 'Browser';
     _notify();
 
@@ -243,6 +271,7 @@ class BrowserTabSession {
     if (media == null || pageMedia.contains(media)) return;
     pageMedia.add(media);
     if (pageMedia.length > _maxPageMedia) pageMedia.removeAt(0);
+    mediaDetectionSerial += 1;
     appController.addDetectedMedia(media);
     _notify();
   }
