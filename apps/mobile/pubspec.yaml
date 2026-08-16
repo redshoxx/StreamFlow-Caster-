@@ -1,7 +1,7 @@
 name: streamflow
-description: StreamFlow mobile browser and universal cast controller.
+description: StreamFlow release browser and universal cast controller.
 publish_to: "none"
-version: 0.7.0+8
+version: 1.0.0+10
 
 environment:
   sdk: ">=3.12.0 <4.0.0"

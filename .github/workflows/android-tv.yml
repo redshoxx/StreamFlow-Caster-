@@ -1,4 +1,4 @@
-name: Android TV APK
+name: Android TV Release
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ on:
 jobs:
   apk:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: apps/android-tv
@@ -26,16 +26,9 @@ jobs:
           gradle-version: "9.5.0"
       - name: Android TV release lint
         run: gradle --no-daemon :app:lintRelease
-      - name: Print lint report
-        if: always()
-        run: |
-          REPORT="$(find app/build -name 'lint-results-release.txt' | head -n 1)"
-          if [ -n "$REPORT" ]; then
-            cat "$REPORT"
-          fi
-      - name: Build test and optimized release APKs
-        run: gradle --no-daemon :app:assembleDebug :app:assembleRelease
-      - name: Prepare APK artifacts
+      - name: Build optimized release APK
+        run: gradle --no-daemon :app:assembleRelease
+      - name: Prepare installable release APK
         env:
           TV_KEYSTORE_BASE64: ${{ secrets.ANDROID_TV_KEYSTORE_BASE64 }}
           TV_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_TV_KEYSTORE_PASSWORD }}
@@ -44,39 +37,43 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ../../dist
-          cp app/build/outputs/apk/debug/app-debug.apk ../../dist/StreamFlow-TV-test.apk
-
           RELEASE_APK="$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' | head -n 1)"
           if [ -z "$RELEASE_APK" ]; then
             echo "No release APK produced"
             exit 1
           fi
-          cp "$RELEASE_APK" ../../dist/StreamFlow-TV-release-unsigned.apk
 
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           if [ -n "${TV_KEYSTORE_BASE64:-}" ] && [ -n "${TV_KEYSTORE_PASSWORD:-}" ] && [ -n "${TV_KEY_ALIAS:-}" ] && [ -n "${TV_KEY_PASSWORD:-}" ]; then
             echo "$TV_KEYSTORE_BASE64" | base64 --decode > /tmp/streamflow-tv.jks
-            APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
-            "$APKSIGNER" sign \
-              --ks /tmp/streamflow-tv.jks \
-              --ks-key-alias "$TV_KEY_ALIAS" \
-              --ks-pass env:TV_KEYSTORE_PASSWORD \
-              --key-pass env:TV_KEY_PASSWORD \
-              --out ../../dist/StreamFlow-TV-release.apk \
-              ../../dist/StreamFlow-TV-release-unsigned.apk
-            "$APKSIGNER" verify --verbose --print-certs ../../dist/StreamFlow-TV-release.apk
-            rm -f /tmp/streamflow-tv.jks
           else
-            echo "Android TV signing secrets are not configured; producing unsigned release + installable test APK."
+            TV_KEYSTORE_PASSWORD="streamflow-release"
+            TV_KEY_PASSWORD="streamflow-release"
+            TV_KEY_ALIAS="streamflow"
+            keytool -genkeypair -v \
+              -keystore /tmp/streamflow-tv.jks \
+              -storepass "$TV_KEYSTORE_PASSWORD" \
+              -keypass "$TV_KEY_PASSWORD" \
+              -alias "$TV_KEY_ALIAS" \
+              -keyalg RSA -keysize 3072 -validity 3650 \
+              -dname "CN=StreamFlow Sideload Release, OU=StreamFlow, O=redshoxx, C=AT"
           fi
 
+          "$APKSIGNER" sign \
+            --ks /tmp/streamflow-tv.jks \
+            --ks-key-alias "$TV_KEY_ALIAS" \
+            --ks-pass env:TV_KEYSTORE_PASSWORD \
+            --key-pass env:TV_KEY_PASSWORD \
+            --out ../../dist/StreamFlow-TV-release.apk \
+            "$RELEASE_APK"
+          "$APKSIGNER" verify --verbose --print-certs ../../dist/StreamFlow-TV-release.apk
+          rm -f /tmp/streamflow-tv.jks
           cd ../../dist
-          sha256sum StreamFlow-TV-*.apk > StreamFlow-TV.sha256
+          sha256sum StreamFlow-TV-release.apk > StreamFlow-TV-release.apk.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: StreamFlow-TV
+          name: StreamFlow-TV-Release
           path: |
-            dist/StreamFlow-TV-test.apk
-            dist/StreamFlow-TV-release-unsigned.apk
             dist/StreamFlow-TV-release.apk
-            dist/StreamFlow-TV.sha256
-          if-no-files-found: warn
+            dist/StreamFlow-TV-release.apk.sha256
+          if-no-files-found: error

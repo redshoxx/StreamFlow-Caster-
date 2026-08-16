@@ -1,4 +1,4 @@
-name: iOS AltStore IPA
+name: iOS AltStore Release
 
 on:
   workflow_dispatch:
@@ -29,21 +29,23 @@ jobs:
         run: bash ../../scripts/configure-mobile-ios.sh ios
       - name: Resolve packages
         run: flutter pub get
-      - name: Build unsigned iOS app
+      - name: Analyze release source
+        run: flutter analyze
+      - name: Build iOS release app
         run: flutter build ios --release --no-codesign
-      - name: Package IPA for AltStore signing
+      - name: Package AltStore release IPA
         run: |
           rm -rf ../../dist
           mkdir -p ../../dist/Payload
           cp -R build/ios/iphoneos/Runner.app ../../dist/Payload/Runner.app
           cd ../../dist
-          /usr/bin/zip -qry StreamFlow-iOS-unsigned.ipa Payload
+          /usr/bin/zip -qry StreamFlow-iOS-AltStore.ipa Payload
           rm -rf Payload
-          shasum -a 256 StreamFlow-iOS-unsigned.ipa > StreamFlow-iOS-unsigned.sha256
+          shasum -a 256 StreamFlow-iOS-AltStore.ipa > StreamFlow-iOS-AltStore.ipa.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: StreamFlow-iOS-AltStore
+          name: StreamFlow-iOS-Release
           path: |
-            dist/StreamFlow-iOS-unsigned.ipa
-            dist/StreamFlow-iOS-unsigned.sha256
+            dist/StreamFlow-iOS-AltStore.ipa
+            dist/StreamFlow-iOS-AltStore.ipa.sha256
           if-no-files-found: error

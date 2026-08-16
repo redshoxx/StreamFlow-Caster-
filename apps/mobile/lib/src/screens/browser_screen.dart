@@ -1,12 +1,11 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../app/streamflow_controller.dart';
 import '../browser/ad_blocker.dart';
-import '../media/media_detector.dart';
+import '../browser/browser_tab_session.dart';
 import '../models/browser_entry.dart';
 import '../models/cast_device.dart';
 import '../models/detected_media.dart';
@@ -28,259 +27,119 @@ class BrowserScreen extends StatefulWidget {
 }
 
 class _BrowserScreenState extends State<BrowserScreen> {
-  static const _homeUrl = 'https://www.google.com';
-  static const _maxPageMedia = 100;
+  static const _maxTabs = 24;
 
-  late final WebViewController _web;
-  late final TextEditingController _address;
-  final List<DetectedMedia> _pageMedia = <DetectedMedia>[];
   final _adBlocker = AdBlocker();
-
-  Timer? _earlyAdBlockTimer;
-  Timer? _latePageTimer;
-  var _pageGeneration = 0;
-  var _progress = 0;
-  var _pageTitle = 'Browser';
+  final List<BrowserTabSession> _tabs = <BrowserTabSession>[];
+  var _activeIndex = 0;
+  var _nextTabId = 1;
   var _adBlockEnabled = true;
-  var _blockedAds = 0;
-  Uri? _currentUri;
+
+  BrowserTabSession get _active => _tabs[_activeIndex];
 
   @override
   void initState() {
     super.initState();
-    final initialUri = widget.initialUri ?? Uri.parse(_homeUrl);
-    _address = TextEditingController(text: initialUri.toString());
-    _currentUri = initialUri;
+    _addInitialTab(widget.initialUri ?? Uri.parse(BrowserTabSession.homeUrl));
+    unawaited(_loadAdBlockSetting());
+  }
 
-    _web = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..addJavaScriptChannel(
-        'StreamFlowAdBlock',
-        onMessageReceived: (message) {
-          if (!mounted || !_adBlockEnabled) return;
-          final delta = int.tryParse(message.message) ?? 0;
-          if (delta <= 0) return;
-          setState(() => _blockedAds += delta);
-        },
-      )
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onProgress: (value) {
-            if (mounted) setState(() => _progress = value);
-          },
-          onPageStarted: _onPageStarted,
-          onPageFinished: _onPageFinished,
-          onNavigationRequest: (request) {
-            if (_adBlockEnabled && _adBlocker.shouldBlockUrl(request.url)) {
-              if (mounted) setState(() => _blockedAds += 1);
-              return NavigationDecision.prevent;
-            }
-            _capture(request.url);
-            return NavigationDecision.navigate;
-          },
-        ),
+  void _addInitialTab(Uri uri) {
+    final session = _makeSession(uri);
+    _tabs.add(session);
+    unawaited(session.initialize(enableAdBlock: _adBlockEnabled));
+  }
+
+  BrowserTabSession _makeSession(Uri uri) => BrowserTabSession(
+        id: _nextTabId++,
+        initialUri: uri,
+        appController: widget.controller,
+        adBlocker: _adBlocker,
+        onChanged: _onTabChanged,
       );
 
-    unawaited(_initializeBrowser());
+  void _onTabChanged() {
+    if (mounted) setState(() {});
   }
 
-  Future<void> _initializeBrowser() async {
-    var enabled = true;
+  Future<void> _loadAdBlockSetting() async {
     try {
-      enabled = await _adBlocker.loadEnabled();
-    } catch (_) {
-      // Ad blocking stays enabled if preferences are unavailable.
-    }
-    if (!mounted) return;
-    if (enabled != _adBlockEnabled) {
+      final enabled = await _adBlocker.loadEnabled();
+      if (!mounted || enabled == _adBlockEnabled) return;
       setState(() => _adBlockEnabled = enabled);
-    }
-    await _web.loadRequest(widget.initialUri ?? Uri.parse(_homeUrl));
-  }
-
-  void _onPageStarted(String url) {
-    if (!mounted) return;
-    _earlyAdBlockTimer?.cancel();
-    _latePageTimer?.cancel();
-    final generation = ++_pageGeneration;
-
-    setState(() {
-      _address.text = url;
-      _currentUri = Uri.tryParse(url);
-      _progress = 0;
-      _blockedAds = 0;
-      _pageMedia.clear();
-    });
-
-    if (_adBlockEnabled) {
-      _earlyAdBlockTimer = Timer(const Duration(milliseconds: 250), () {
-        if (mounted &&
-            _adBlockEnabled &&
-            generation == _pageGeneration) {
-          unawaited(_applyAdBlocker());
-        }
-      });
-    }
-  }
-
-  Future<void> _onPageFinished(String url) async {
-    if (!mounted) return;
-    final generation = _pageGeneration;
-    final finishedUri = Uri.tryParse(url);
-    if (finishedUri == null || _currentUri?.toString() != finishedUri.toString()) {
-      return;
-    }
-
-    _address.text = url;
-    if (_adBlockEnabled) await _applyAdBlocker();
-    if (!mounted || generation != _pageGeneration) return;
-
-    final title = await _web.getTitle();
-    if (!mounted || generation != _pageGeneration) return;
-
-    final resolvedTitle = title?.trim().isNotEmpty == true
-        ? title!.trim()
-        : finishedUri.host.isNotEmpty
-            ? finishedUri.host
-            : 'Browser';
-    setState(() {
-      _pageTitle = resolvedTitle;
-      _currentUri = finishedUri;
-      _progress = 100;
-    });
-    unawaited(widget.controller.recordVisit(finishedUri, resolvedTitle));
-
-    await _scan(expectedGeneration: generation);
-    if (!mounted || generation != _pageGeneration) return;
-
-    _latePageTimer?.cancel();
-    _latePageTimer = Timer(const Duration(seconds: 2), () {
-      if (!mounted || generation != _pageGeneration) return;
-      unawaited(_scan(expectedGeneration: generation));
-    });
-  }
-
-  Future<void> _applyAdBlocker() async {
-    if (!_adBlockEnabled) return;
-    try {
-      await _web.runJavaScript(_adBlocker.javaScript);
-    } catch (_) {
-      // Early document stages can temporarily reject script execution.
-    }
+      for (final tab in _tabs) {
+        await tab.setAdBlockEnabled(enabled);
+      }
+    } catch (_) {}
   }
 
   Future<void> _toggleAdBlocker() async {
     final enabled = !_adBlockEnabled;
-    setState(() {
-      _adBlockEnabled = enabled;
-      _blockedAds = 0;
-    });
-
+    setState(() => _adBlockEnabled = enabled);
     try {
       await _adBlocker.saveEnabled(enabled);
     } catch (_) {}
-
-    if (enabled) {
-      await _applyAdBlocker();
-    } else {
-      await _web.reload();
+    for (final tab in List<BrowserTabSession>.of(_tabs)) {
+      await tab.setAdBlockEnabled(enabled);
     }
-
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          enabled ? 'Adblocker aktiviert.' : 'Adblocker deaktiviert.',
+          enabled
+              ? 'Werbung, Pop-ups und Web-Push werden blockiert.'
+              : 'Schutz für diese Browsersitzung deaktiviert.',
         ),
       ),
     );
   }
 
-  Future<void> _scan({int? expectedGeneration}) async {
-    if (expectedGeneration != null && expectedGeneration != _pageGeneration) {
+  void _newTab({Uri? uri}) {
+    if (_tabs.length >= _maxTabs) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Maximal 24 Tabs gleichzeitig.')),
+      );
       return;
     }
-    try {
-      final raw = await _web.runJavaScriptReturningResult(
-        MediaDetector.domScannerScript,
-      );
-      if (!mounted ||
-          (expectedGeneration != null && expectedGeneration != _pageGeneration)) {
-        return;
-      }
-
-      String json = raw.toString();
-      if (json.startsWith('"') && json.endsWith('"')) {
-        json = jsonDecode(json) as String;
-      }
-      final decoded = jsonDecode(json);
-      if (decoded is! List) return;
-      for (final item in decoded.whereType<Map>()) {
-        _capture(
-          item['url']?.toString() ?? '',
-          label: item['label']?.toString(),
-          mime: item['type']?.toString(),
-        );
-      }
-    } catch (_) {
-      // Some pages block injected JavaScript. Navigation interception remains active.
-    }
+    final session = _makeSession(uri ?? Uri.parse(BrowserTabSession.homeUrl));
+    setState(() {
+      _tabs.add(session);
+      _activeIndex = _tabs.length - 1;
+    });
+    unawaited(session.initialize(enableAdBlock: _adBlockEnabled));
   }
 
-  void _capture(String url, {String? label, String? mime}) {
-    if (_adBlockEnabled && _adBlocker.shouldBlockUrl(url)) return;
-    final candidate = MediaDetector.fromUrl(url, label: label, mime: mime);
-    if (candidate == null || _pageMedia.contains(candidate)) return;
-
-    if (mounted) {
+  void _closeTab(int index) {
+    if (index < 0 || index >= _tabs.length) return;
+    if (_tabs.length == 1) {
+      final old = _tabs.single;
+      final replacement = _makeSession(Uri.parse(BrowserTabSession.homeUrl));
       setState(() {
-        _pageMedia.add(candidate);
-        if (_pageMedia.length > _maxPageMedia) {
-          _pageMedia.removeAt(0);
-        }
+        _tabs[0] = replacement;
+        _activeIndex = 0;
       });
+      old.dispose();
+      unawaited(replacement.initialize(enableAdBlock: _adBlockEnabled));
+      return;
     }
-    widget.controller.addDetectedMedia(candidate);
-  }
 
-  void _go() {
-    final raw = _address.text.trim();
-    if (raw.isEmpty) return;
-
-    var value = raw;
-    if (!value.contains('://')) {
-      if ((value.contains('.') || value.startsWith('localhost')) &&
-          !value.contains(' ')) {
-        value = 'https://$value';
-      } else {
-        value = _searchUrl(value);
+    final old = _tabs[index];
+    setState(() {
+      _tabs.removeAt(index);
+      if (_activeIndex > index) {
+        _activeIndex -= 1;
+      } else if (_activeIndex >= _tabs.length) {
+        _activeIndex = _tabs.length - 1;
       }
-    }
-
-    var uri = Uri.tryParse(value);
-    if (!_isWebUri(uri)) {
-      uri = Uri.parse(_searchUrl(raw));
-    }
-
-    FocusScope.of(context).unfocus();
-    unawaited(_web.loadRequest(uri!));
+    });
+    old.dispose();
   }
-
-  String _searchUrl(String query) =>
-      'https://www.google.com/search?q=${Uri.encodeQueryComponent(query)}';
-
-  bool _isWebUri(Uri? uri) =>
-      uri != null &&
-      (uri.scheme == 'http' || uri.scheme == 'https') &&
-      uri.host.isNotEmpty;
-
-  Future<void> _home() => _web.loadRequest(Uri.parse(_homeUrl));
 
   Future<void> _toggleFavorite() async {
-    final uri = _currentUri;
+    final uri = _active.currentUri;
     if (uri == null) return;
     final wasFavorite = widget.controller.isFavorite(uri);
-    await widget.controller.toggleFavorite(uri, _pageTitle);
+    await widget.controller.toggleFavorite(uri, _active.pageTitle);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -293,14 +152,14 @@ class _BrowserScreenState extends State<BrowserScreen> {
 
   void _openBrowserEntry(BrowserEntry entry) {
     Navigator.of(context).pop();
-    unawaited(_web.loadRequest(entry.url));
+    unawaited(_active.openUri(entry.url));
   }
 
   @override
   void dispose() {
-    _earlyAdBlockTimer?.cancel();
-    _latePageTimer?.cancel();
-    _address.dispose();
+    for (final tab in _tabs) {
+      tab.dispose();
+    }
     super.dispose();
   }
 
@@ -308,14 +167,13 @@ class _BrowserScreenState extends State<BrowserScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final favorite = widget.controller.isFavorite(_currentUri);
-    final secure = _currentUri?.scheme == 'https';
+    final favorite = widget.controller.isFavorite(_active.currentUri);
 
     return SafeArea(
       child: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 10, 10, 8),
+            padding: const EdgeInsets.fromLTRB(16, 8, 8, 6),
             child: Row(
               children: [
                 Expanded(
@@ -325,11 +183,11 @@ class _BrowserScreenState extends State<BrowserScreen> {
                       Text(
                         'StreamFlow',
                         style: theme.textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w700,
+                          fontWeight: FontWeight.w800,
                         ),
                       ),
                       Text(
-                        _pageTitle,
+                        _active.pageTitle,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: theme.textTheme.bodySmall,
@@ -339,7 +197,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
                 ),
                 IconButton(
                   tooltip: favorite ? 'Favorit entfernen' : 'Favorit hinzufügen',
-                  onPressed: _currentUri == null ? null : _toggleFavorite,
+                  onPressed: _active.currentUri == null ? null : _toggleFavorite,
                   icon: Icon(
                     favorite ? Icons.star_rounded : Icons.star_border_rounded,
                   ),
@@ -351,14 +209,16 @@ class _BrowserScreenState extends State<BrowserScreen> {
                 ),
                 IconButton(
                   tooltip: _adBlockEnabled
-                      ? 'Adblocker aktiv • $_blockedAds blockiert'
-                      : 'Adblocker deaktiviert',
+                      ? 'Schutz aktiv • ${_active.blockedAds} blockiert'
+                      : 'Schutz deaktiviert',
                   onPressed: _toggleAdBlocker,
                   icon: Badge(
-                    isLabelVisible: _adBlockEnabled && _blockedAds > 0,
-                    label: Text(_blockedAds > 99 ? '99+' : '$_blockedAds'),
+                    isLabelVisible: _adBlockEnabled && _active.blockedAds > 0,
+                    label: Text(
+                      _active.blockedAds > 99 ? '99+' : '${_active.blockedAds}',
+                    ),
                     child: Icon(
-                      Icons.security,
+                      Icons.shield_outlined,
                       color: _adBlockEnabled
                           ? colors.primary
                           : colors.onSurfaceVariant,
@@ -374,9 +234,10 @@ class _BrowserScreenState extends State<BrowserScreen> {
                   )
                 else
                   IconButton(
-                    tooltip: 'Cast',
-                    onPressed:
-                        _pageMedia.isEmpty ? null : () => _showMedia(context),
+                    tooltip: 'Auf TV übertragen',
+                    onPressed: _active.pageMedia.isEmpty
+                        ? null
+                        : () => _showMedia(context),
                     icon: const Icon(Icons.cast_outlined),
                   ),
               ],
@@ -393,55 +254,77 @@ class _BrowserScreenState extends State<BrowserScreen> {
                 children: [
                   const SizedBox(width: 12),
                   Icon(
-                    secure ? Icons.lock_outline : Icons.info_outline_rounded,
+                    _active.secure
+                        ? Icons.lock_outline_rounded
+                        : Icons.info_outline_rounded,
                     size: 17,
-                    color: secure ? colors.primary : colors.onSurfaceVariant,
+                    color: _active.secure
+                        ? colors.primary
+                        : colors.onSurfaceVariant,
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: TextField(
-                      controller: _address,
+                      key: ValueKey(_active.id),
+                      controller: _active.address,
+                      focusNode: _active.addressFocus,
                       textInputAction: TextInputAction.go,
                       keyboardType: TextInputType.url,
                       autocorrect: false,
                       enableSuggestions: false,
-                      onSubmitted: (_) => _go(),
+                      onSubmitted: (_) {
+                        FocusScope.of(context).unfocus();
+                        unawaited(_active.goFromAddress());
+                      },
                       decoration: const InputDecoration(
-                        hintText: 'Suchen oder URL eingeben',
+                        hintText: 'Suchen oder Webadresse',
                         border: InputBorder.none,
                         isDense: true,
                         contentPadding: EdgeInsets.symmetric(vertical: 13),
                       ),
                     ),
                   ),
+                  _TabCountButton(
+                    count: _tabs.length,
+                    onTap: _showTabs,
+                  ),
                   IconButton(
-                    onPressed: _go,
+                    tooltip: 'Öffnen',
+                    onPressed: () {
+                      FocusScope.of(context).unfocus();
+                      unawaited(_active.goFromAddress());
+                    },
                     icon: const Icon(Icons.arrow_forward_rounded),
                   ),
                 ],
               ),
             ),
           ),
-          if (_progress < 100)
+          if (_active.progress < 100)
             LinearProgressIndicator(
-              value: _progress <= 0 ? null : _progress / 100,
+              value: _active.progress <= 0 ? null : _active.progress / 100,
               minHeight: 2,
             ),
           Expanded(
             child: Stack(
               children: [
-                Positioned.fill(child: WebViewWidget(controller: _web)),
-                if (_pageMedia.isNotEmpty)
+                Positioned.fill(
+                  child: WebViewWidget(
+                    key: ValueKey('web-${_active.id}'),
+                    controller: _active.web,
+                  ),
+                ),
+                if (_active.pageMedia.isNotEmpty)
                   Positioned(
                     right: 14,
                     bottom: 14,
                     child: FilledButton.icon(
                       onPressed: () => _showMedia(context),
                       icon: Badge(
-                        label: Text('${_pageMedia.length}'),
+                        label: Text('${_active.pageMedia.length}'),
                         child: const Icon(Icons.video_collection_outlined),
                       ),
-                      label: Text('${_pageMedia.length} Medien'),
+                      label: const Text('Medien'),
                     ),
                   ),
               ],
@@ -450,33 +333,38 @@ class _BrowserScreenState extends State<BrowserScreen> {
           Material(
             color: colors.surface,
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
                   IconButton(
                     tooltip: 'Zurück',
-                    onPressed: () => _web.goBack(),
+                    onPressed: () => unawaited(_active.goBack()),
                     icon: const Icon(Icons.arrow_back_ios_new_rounded),
                   ),
                   IconButton(
                     tooltip: 'Vor',
-                    onPressed: () => _web.goForward(),
+                    onPressed: () => unawaited(_active.goForward()),
                     icon: const Icon(Icons.arrow_forward_ios_rounded),
                   ),
                   IconButton(
+                    tooltip: 'Neuer Tab',
+                    onPressed: _newTab,
+                    icon: const Icon(Icons.add_box_outlined),
+                  ),
+                  IconButton(
                     tooltip: 'Startseite',
-                    onPressed: _home,
+                    onPressed: () => unawaited(_active.home()),
                     icon: const Icon(Icons.home_outlined),
                   ),
                   IconButton(
                     tooltip: 'Neu laden',
-                    onPressed: () => _web.reload(),
+                    onPressed: () => unawaited(_active.reload()),
                     icon: const Icon(Icons.refresh_rounded),
                   ),
                   IconButton(
-                    tooltip: 'Medien suchen',
-                    onPressed: _scan,
+                    tooltip: 'Medien neu erkennen',
+                    onPressed: () => unawaited(_active.scan()),
                     icon: const Icon(Icons.manage_search_rounded),
                   ),
                 ],
@@ -484,6 +372,94 @@ class _BrowserScreenState extends State<BrowserScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  void _showTabs() {
+    showModalBottomSheet<void>(
+      context: context,
+      useSafeArea: true,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) => FractionallySizedBox(
+          heightFactor: 0.9,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 12, 10),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '${_tabs.length} ${_tabs.length == 1 ? 'Tab' : 'Tabs'}',
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleLarge
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                    FilledButton.tonalIcon(
+                      onPressed: () {
+                        Navigator.of(sheetContext).pop();
+                        _newTab();
+                      },
+                      icon: const Icon(Icons.add_rounded),
+                      label: const Text('Neu'),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: ListView.separated(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
+                  itemCount: _tabs.length,
+                  separatorBuilder: (_, _) => const SizedBox(height: 6),
+                  itemBuilder: (context, index) {
+                    final tab = _tabs[index];
+                    final active = index == _activeIndex;
+                    return Card(
+                      color: active
+                          ? Theme.of(context).colorScheme.primaryContainer
+                          : null,
+                      child: ListTile(
+                        leading: CircleAvatar(
+                          child: Text('${index + 1}'),
+                        ),
+                        title: Text(
+                          tab.pageTitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(
+                          tab.currentUri?.host.isNotEmpty == true
+                              ? tab.currentUri!.host
+                              : 'Neuer Tab',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        onTap: () {
+                          setState(() => _activeIndex = index);
+                          Navigator.of(sheetContext).pop();
+                        },
+                        trailing: IconButton(
+                          tooltip: 'Tab schließen',
+                          onPressed: () {
+                            _closeTab(index);
+                            setSheetState(() {});
+                          },
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -511,7 +487,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
       showDragHandle: true,
       isScrollControlled: true,
       builder: (sheetContext) => FractionallySizedBox(
-        heightFactor: 0.72,
+        heightFactor: 0.75,
         child: Column(
           children: [
             Padding(
@@ -527,18 +503,19 @@ class _BrowserScreenState extends State<BrowserScreen> {
                           style: Theme.of(context)
                               .textTheme
                               .titleLarge
-                              ?.copyWith(fontWeight: FontWeight.w700),
+                              ?.copyWith(fontWeight: FontWeight.w800),
                         ),
                         Text(
-                          '${_pageMedia.length} Quellen auf dieser Seite',
+                          '${_active.pageMedia.length} abspielbare Quellen',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ],
                     ),
                   ),
                   IconButton(
-                    onPressed: _scan,
-                    icon: const Icon(Icons.refresh),
+                    tooltip: 'Neu erkennen',
+                    onPressed: () => unawaited(_active.scan()),
+                    icon: const Icon(Icons.refresh_rounded),
                   ),
                 ],
               ),
@@ -547,15 +524,13 @@ class _BrowserScreenState extends State<BrowserScreen> {
             Expanded(
               child: ListView.separated(
                 padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
-                itemCount: _pageMedia.length,
+                itemCount: _active.pageMedia.length,
                 separatorBuilder: (_, _) => const SizedBox(height: 6),
                 itemBuilder: (context, index) {
-                  final item = _pageMedia[index];
+                  final item = _active.pageMedia[index];
                   return Card(
                     child: ListTile(
-                      leading: CircleAvatar(
-                        child: Icon(_mediaIcon(item.kind)),
-                      ),
+                      leading: CircleAvatar(child: Icon(_mediaIcon(item.kind))),
                       title: Text(
                         item.displayName,
                         maxLines: 1,
@@ -614,6 +589,39 @@ class _BrowserScreenState extends State<BrowserScreen> {
         MediaKind.audio => 'Audio',
         MediaKind.unknown => 'Medium',
       };
+}
+
+class _TabCountButton extends StatelessWidget {
+  const _TabCountButton({required this.count, required this.onTap});
+
+  final int count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: 'Tabs',
+      onPressed: onTap,
+      icon: Container(
+        width: 25,
+        height: 25,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          border: Border.all(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+            width: 1.5,
+          ),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(
+          count > 99 ? '99+' : '$count',
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
+        ),
+      ),
+    );
+  }
 }
 
 class _BrowserLibrarySheet extends StatelessWidget {
