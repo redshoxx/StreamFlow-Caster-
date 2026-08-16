@@ -167,8 +167,6 @@ class BrowserTabSession {
     blockedAds = 0;
     pageMedia.clear();
     lastMediaIntentAt = null;
-    mediaIntentSerial = 0;
-    mediaDetectionSerial = 0;
     pageTitle = uri?.host.isNotEmpty == true ? uri!.host : 'Browser';
     _notify();
 
