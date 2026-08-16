@@ -14,7 +14,7 @@ class NsdAdvertiser(context: Context) {
             serviceName = "StreamFlow TV"
             serviceType = "_streamflow._tcp."
             setPort(port)
-            setAttribute("version", "0.5.1")
+            setAttribute("version", "1.0.1")
             setAttribute("protocol", "2")
             setAttribute("pairing", "required")
         }
