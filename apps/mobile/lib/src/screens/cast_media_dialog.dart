@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../cast/device_discovery_service.dart';
+import '../cast/dlna_cast_service.dart';
+import '../cast/google_cast_service.dart';
 import '../cast/receiver_client.dart';
 import '../models/cast_device.dart';
 import '../models/detected_media.dart';
@@ -31,6 +34,7 @@ class _CastMediaDialogState extends State<CastMediaDialog> {
   List<CastDevice> _devices = const [];
   String? _error;
   String? _connectingId;
+  var _scanning = true;
 
   @override
   void initState() {
@@ -42,7 +46,8 @@ class _CastMediaDialogState extends State<CastMediaDialog> {
         sorted.sort((a, b) {
           if (a.id == preferred && b.id != preferred) return -1;
           if (b.id == preferred && a.id != preferred) return 1;
-          return a.name.compareTo(b.name);
+          final protocol = a.protocol.index.compareTo(b.protocol.index);
+          return protocol != 0 ? protocol : a.name.compareTo(b.name);
         });
       }
       if (mounted) setState(() => _devices = sorted);
@@ -54,7 +59,11 @@ class _CastMediaDialogState extends State<CastMediaDialog> {
     try {
       await _discovery.start();
     } catch (_) {
-      if (mounted) setState(() => _error = 'Gerätesuche fehlgeschlagen.');
+      if (mounted && _devices.isEmpty) {
+        setState(() => _error = 'Gerätesuche konnte nicht vollständig gestartet werden.');
+      }
+    } finally {
+      if (mounted) setState(() => _scanning = false);
     }
   }
 
@@ -66,28 +75,21 @@ class _CastMediaDialogState extends State<CastMediaDialog> {
     });
 
     try {
-      final health = await _client.health(device);
-      if (health['protocol'] != 2 || health['pairingRequired'] != true) {
-        throw const ReceiverException('Unsupported receiver protocol.');
-      }
-
-      final pairingCode = await _resolvePairingCode(device);
-      if (!mounted) return;
-      if (pairingCode == null) {
-        setState(() => _connectingId = null);
-        return;
-      }
-
-      await _client.load(
-        device,
-        widget.media.url,
-        title: widget.media.displayName,
-        pairingCode: pairingCode,
-      );
-      if (mounted) {
-        Navigator.of(context).pop(
-          CastTarget(device: device, pairingCode: pairingCode),
-        );
+      switch (device.protocol) {
+        case CastProtocol.streamFlow:
+          await _castStreamFlow(device);
+          break;
+        case CastProtocol.googleCast:
+          await GoogleCastService.instance.load(device, widget.media);
+          if (mounted) Navigator.of(context).pop(CastTarget(device: device));
+          break;
+        case CastProtocol.dlna:
+          await DlnaCastService.instance.load(device, widget.media);
+          if (mounted) Navigator.of(context).pop(CastTarget(device: device));
+          break;
+        case CastProtocol.airPlay:
+          if (mounted) Navigator.of(context).pop(CastTarget(device: device));
+          break;
       }
     } on ReceiverException catch (error) {
       if (!mounted) return;
@@ -95,15 +97,41 @@ class _CastMediaDialogState extends State<CastMediaDialog> {
         _connectingId = null;
         _error = error.isPairingRequired
             ? 'Der Kopplungscode ist nicht mehr gültig. Bitte erneut verbinden.'
-            : 'Der Fernseher antwortet nicht mit dem aktuellen StreamFlow-Protokoll.';
+            : 'Der StreamFlow Receiver antwortet nicht mit dem aktuellen Protokoll.';
       });
     } catch (_) {
       if (mounted) {
         setState(() {
           _connectingId = null;
-          _error = 'Der Fernseher konnte den Stream nicht laden.';
+          _error = '${device.name} konnte den Stream nicht laden.';
         });
       }
+    }
+  }
+
+  Future<void> _castStreamFlow(CastDevice device) async {
+    final health = await _client.health(device);
+    if (health['protocol'] != 2 || health['pairingRequired'] != true) {
+      throw const ReceiverException('Unsupported receiver protocol.');
+    }
+
+    final pairingCode = await _resolvePairingCode(device);
+    if (!mounted) return;
+    if (pairingCode == null) {
+      setState(() => _connectingId = null);
+      return;
+    }
+
+    await _client.load(
+      device,
+      widget.media.url,
+      title: widget.media.displayName,
+      pairingCode: pairingCode,
+    );
+    if (mounted) {
+      Navigator.of(context).pop(
+        CastTarget(device: device, pairingCode: pairingCode),
+      );
     }
   }
 
@@ -167,9 +195,7 @@ class _CastMediaDialogState extends State<CastMediaDialog> {
                   ],
                   onChanged: (_) => setDialogState(() {}),
                   onSubmitted: (value) {
-                    if (value.length == 8) {
-                      Navigator.of(dialogContext).pop(value);
-                    }
+                    if (value.length == 8) Navigator.of(dialogContext).pop(value);
                   },
                   decoration: const InputDecoration(
                     labelText: 'Kopplungscode',
@@ -210,11 +236,19 @@ class _CastMediaDialogState extends State<CastMediaDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final airPlayDevice = const CastDevice(
+      id: 'airplay-system-picker',
+      name: 'AirPlay',
+      protocol: CastProtocol.airPlay,
+      modelName: 'Apple Systemauswahl',
+    );
+
     return AlertDialog(
       icon: const Icon(Icons.cast_rounded),
-      title: const Text('Auf Fernseher abspielen'),
+      title: const Text('Auf Gerät abspielen'),
       content: SizedBox(
-        width: 420,
+        width: 440,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -231,54 +265,84 @@ class _CastMediaDialogState extends State<CastMediaDialog> {
                 padding: const EdgeInsets.only(bottom: 12),
                 child: Text(
                   _error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                  style: TextStyle(color: colors.error),
                   textAlign: TextAlign.center,
                 ),
               ),
-            if (_devices.isEmpty)
+            if (_scanning)
               const Padding(
-                padding: EdgeInsets.symmetric(vertical: 24),
-                child: Column(
-                  children: [
-                    CircularProgressIndicator(),
-                    SizedBox(height: 16),
-                    Text('StreamFlow TV wird gesucht …'),
-                  ],
-                ),
-              )
-            else
-              ..._devices.map(
-                (device) => Card(
-                  child: ListTile(
-                    leading: const Icon(Icons.tv_rounded),
-                    title: Text(device.name),
-                    subtitle: Text(
-                      device.id == widget.preferredDeviceId
-                          ? 'Bevorzugtes Gerät'
-                          : device.host,
-                    ),
-                    trailing: _connectingId == device.id
-                        ? const SizedBox.square(
-                            dimension: 22,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.play_arrow_rounded),
-                    enabled: _connectingId == null,
-                    onTap: () => _cast(device),
-                  ),
-                ),
+                padding: EdgeInsets.only(bottom: 10),
+                child: LinearProgressIndicator(),
               ),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 360),
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  if (Platform.isIOS) _deviceTile(airPlayDevice),
+                  ..._devices.map(_deviceTile),
+                  if (_devices.isEmpty && !Platform.isIOS && !_scanning)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 24),
+                      child: Text(
+                        'Keine kompatiblen Geräte gefunden. Prüfe, ob Smartphone und Fernseher im selben Netzwerk sind.',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'StreamFlow erkennt Receiver, Chromecast/Google Cast und DLNA automatisch. AirPlay nutzt auf dem iPhone die Apple-Systemauswahl.',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: colors.onSurfaceVariant,
+                  ),
+            ),
           ],
         ),
       ),
       actions: [
         TextButton(
-          onPressed: _connectingId == null
-              ? () => Navigator.of(context).pop()
-              : null,
+          onPressed: _connectingId == null ? () => Navigator.of(context).pop() : null,
           child: const Text('Abbrechen'),
         ),
       ],
     );
   }
+
+  Widget _deviceTile(CastDevice device) {
+    final preferred = device.id == widget.preferredDeviceId;
+    return Card(
+      child: ListTile(
+        leading: CircleAvatar(child: Icon(_protocolIcon(device.protocol))),
+        title: Text(device.name),
+        subtitle: Text(
+          preferred
+              ? '${device.protocol.label} • Bevorzugtes Gerät'
+              : device.modelName?.trim().isNotEmpty == true
+                  ? '${device.protocol.label} • ${device.modelName}'
+                  : device.protocol.label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        trailing: _connectingId == device.id
+            ? const SizedBox.square(
+                dimension: 22,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.play_arrow_rounded),
+        enabled: _connectingId == null,
+        onTap: () => _cast(device),
+      ),
+    );
+  }
+
+  IconData _protocolIcon(CastProtocol protocol) => switch (protocol) {
+        CastProtocol.streamFlow => Icons.tv_rounded,
+        CastProtocol.googleCast => Icons.cast_rounded,
+        CastProtocol.dlna => Icons.connected_tv_rounded,
+        CastProtocol.airPlay => Icons.airplay_rounded,
+      };
 }
