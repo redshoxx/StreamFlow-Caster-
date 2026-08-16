@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:permission_handler/permission_handler.dart';
 import 'package:upnp_client/upnp_client.dart';
 
 import '../models/cast_device.dart';
@@ -18,6 +19,13 @@ class DlnaPlaybackStatus {
   final Duration position;
   final Duration duration;
   final double volume;
+}
+
+class DlnaPermissionException implements Exception {
+  const DlnaPermissionException();
+
+  @override
+  String toString() => 'Nearby Wi-Fi permission is required for DLNA discovery.';
 }
 
 class DlnaCastService {
@@ -41,6 +49,7 @@ class DlnaCastService {
     _starting = true;
     final discoverer = DeviceDiscoverer();
     try {
+      await _ensureAndroidPermission();
       await discoverer.start(
         addressTypes: const [InternetAddressType.IPv4],
       );
@@ -65,13 +74,16 @@ class DlnaCastService {
     }
   }
 
+  Future<void> _ensureAndroidPermission() async {
+    if (!Platform.isAndroid) return;
+    final status = await Permission.nearbyWifiDevices.request();
+    if (!status.isGranted) throw const DlnaPermissionException();
+  }
+
   void _upsert(Device device) {
     if (device.avTransportService() == null) return;
     final description = device.description;
     final id = description?.uuid ?? device.url ?? device.hashCode.toString();
-    final name = description?.friendlyName?.trim();
-    final model = description?.modelName?.trim();
-    final endpoint = Uri.tryParse(device.url ?? device.urlBase ?? '');
 
     _nativeDevices[id] = device;
     final list = _nativeDevices.entries
@@ -98,11 +110,6 @@ class DlnaCastService {
         .toList()
       ..sort((a, b) => a.name.compareTo(b.name));
     if (!_controller.isClosed) _controller.add(List.unmodifiable(list));
-
-    // Touch local variables to keep analyzer strict about discovery metadata.
-    if ((name?.isEmpty ?? true) && (model?.isEmpty ?? true) && endpoint == null) {
-      return;
-    }
   }
 
   Device _device(CastDevice device) {
