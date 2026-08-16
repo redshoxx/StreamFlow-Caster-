@@ -59,20 +59,21 @@ class DeviceDiscoveryService {
     ];
 
     Object? firstError;
+    var startedProtocols = 0;
     for (final future in starts) {
       try {
         await future;
+        startedProtocols += 1;
       } catch (error) {
         firstError ??= error;
       }
     }
 
-    // One protocol failing must not hide devices found by the others.
-    if (_allDevicesEmpty && firstError != null) throw firstError;
+    // Discovery is asynchronous. Having no device at this exact instant is not
+    // a startup failure. Only surface an error when every discovery engine
+    // failed to initialize; one unavailable protocol must never hide the rest.
+    if (startedProtocols == 0 && firstError != null) throw firstError;
   }
-
-  bool get _allDevicesEmpty =>
-      _streamFlowDevices.isEmpty && _googleDevices.isEmpty && _dlnaDevices.isEmpty;
 
   Future<void> _startStreamFlow(int generation) async {
     final discovery = BonsoirDiscovery(type: '_streamflow._tcp');
