@@ -22,6 +22,8 @@ jobs:
           flutter-version: "3.47.0"
           cache: true
       - run: flutter create --platforms=android --org com.redshoxx --project-name streamflow .
+      - name: Restore StreamFlow tests after platform generation
+        run: git checkout -- test
       - name: Configure Android release settings
         run: python3 ../../scripts/configure-mobile-android.py android/app/src/main/AndroidManifest.xml
       - run: flutter pub get
@@ -130,9 +132,13 @@ jobs:
           flutter-version: "3.47.0"
           cache: true
       - run: flutter create --platforms=ios --org com.redshoxx --project-name streamflow .
+      - name: Restore StreamFlow tests after platform generation
+        run: git checkout -- test
       - name: Configure StreamFlow iOS release settings
         run: bash ../../scripts/configure-mobile-ios.sh ios
       - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
       - run: flutter build ios --release --no-codesign
       - name: Package AltStore IPA
         run: |

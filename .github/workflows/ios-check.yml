@@ -25,12 +25,16 @@ jobs:
           cache: true
       - name: Create iOS platform project
         run: flutter create --platforms=ios --org com.redshoxx --project-name streamflow .
+      - name: Restore StreamFlow tests after platform generation
+        run: git checkout -- test
       - name: Configure StreamFlow iOS release settings
         run: bash ../../scripts/configure-mobile-ios.sh ios
       - name: Resolve packages
         run: flutter pub get
       - name: Analyze release source
         run: flutter analyze
+      - name: Run tests
+        run: flutter test
       - name: Build iOS release app
         run: flutter build ios --release --no-codesign
       - name: Package AltStore release IPA

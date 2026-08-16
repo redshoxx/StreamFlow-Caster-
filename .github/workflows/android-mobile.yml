@@ -24,6 +24,8 @@ jobs:
           cache: true
       - name: Create Android platform project
         run: flutter create --platforms=android --org com.redshoxx --project-name streamflow .
+      - name: Restore StreamFlow tests after platform generation
+        run: git checkout -- test
       - name: Configure Android release settings
         run: python3 ../../scripts/configure-mobile-android.py android/app/src/main/AndroidManifest.xml
       - name: Resolve packages
