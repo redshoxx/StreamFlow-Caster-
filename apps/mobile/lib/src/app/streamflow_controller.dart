@@ -44,8 +44,7 @@ class StreamFlowController extends ChangeNotifier {
   String? _activePairingCode;
   String? get activePairingCode => _activePairingCode;
 
-  bool get isCasting =>
-      _activeDevice != null && _activeMedia != null && _activePairingCode != null;
+  bool get isCasting => _activeDevice != null && _activeMedia != null;
 
   Future<void> _loadBrowserLibrary() async {
     try {
@@ -172,6 +171,7 @@ class StreamFlowController extends ChangeNotifier {
 
   void setPreferredDevice(CastDevice device) {
     if (_preferredDevice?.id == device.id &&
+        _preferredDevice?.protocol == device.protocol &&
         _preferredDevice?.host == device.host &&
         _preferredDevice?.port == device.port) {
       return;
@@ -183,7 +183,7 @@ class StreamFlowController extends ChangeNotifier {
   void startCasting(
     CastDevice device,
     DetectedMedia media, {
-    required String pairingCode,
+    String? pairingCode,
     VoidCallback? onEnd,
   }) {
     _castCleanup?.call();
