@@ -75,7 +75,7 @@ class GoogleCastService {
       GoogleCastMediaInformation(
         contentId: media.url.toString(),
         contentUrl: media.url,
-        streamType: CastMediaStreamType.BUFFERED,
+        streamType: CastMediaStreamType.buffered,
         contentType: _contentType(media),
       ),
       autoPlay: true,
