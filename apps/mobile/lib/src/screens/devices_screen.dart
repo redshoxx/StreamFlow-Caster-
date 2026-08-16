@@ -44,7 +44,7 @@ class _DevicesScreenState extends State<DevicesScreen> {
     } catch (_) {
       if (mounted && _devices.isEmpty) {
         setState(() {
-          _error = 'Gerätesuche konnte nicht vollständig gestartet werden. Prüfe Netzwerk- und Geräteberechtigungen.';
+          _error = 'Keine Gerätesuche konnte gestartet werden. Prüfe WLAN, lokale Netzwerkfreigaben und ob der Fernseher im selben Netzwerk erreichbar ist.';
         });
       }
     } finally {
@@ -196,7 +196,7 @@ class _DevicesScreenState extends State<DevicesScreen> {
                       ),
                       const SizedBox(height: 6),
                       const Text(
-                        'Smartphone und Fernseher müssen im selben lokalen Netzwerk sein. Chromecast und StreamFlow TV werden automatisch erkannt; DLNA benötigt auf Android die Berechtigung für Geräte in der Nähe.',
+                        'Smartphone und Fernseher müssen im selben lokalen Netzwerk sein. StreamFlow TV, Chromecast und DLNA werden parallel gesucht. Auf neueren Android-Versionen kann dafür eine lokale Netzwerk- oder Gerätefreigabe abgefragt werden.',
                         textAlign: TextAlign.center,
                       ),
                       const SizedBox(height: 14),
