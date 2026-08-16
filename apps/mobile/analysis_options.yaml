@@ -4,3 +4,7 @@ linter:
   rules:
     avoid_print: true
     prefer_final_locals: true
+    # Dart 3.12 suggests null-aware collection elements here; both forms are
+    # semantically equivalent. Keep the clearer conditional form for the
+    # cast-device subtitle assembly until the syntax is adopted project-wide.
+    use_null_aware_elements: false
