@@ -14,6 +14,7 @@ ET.register_namespace("android", ANDROID_NS)
 REQUIRED_PERMISSIONS = (
     "android.permission.INTERNET",
     "android.permission.ACCESS_NETWORK_STATE",
+    "android.permission.ACCESS_WIFI_STATE",
     "android.permission.CHANGE_WIFI_MULTICAST_STATE",
     "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
 )
@@ -31,6 +32,66 @@ APP_ICON = '''<?xml version="1.0" encoding="utf-8"?>
     <path android:fillColor="#5B7CFA" android:pathData="M55,44v20l18,-10z" />
     <path android:fillColor="#FFFFFF" android:pathData="M34,69a3,3 0,1 1,0,6a3,3 0,1 1,0,-6" />
 </vector>
+'''
+
+MAIN_ACTIVITY = '''package com.redshoxx.streamflow
+
+import android.content.Context
+import android.net.wifi.WifiManager
+import android.os.Bundle
+import io.flutter.embedding.android.FlutterActivity
+
+class MainActivity : FlutterActivity() {
+    private var multicastLock: WifiManager.MulticastLock? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        acquireMulticastLock()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        acquireMulticastLock()
+    }
+
+    override fun onPause() {
+        releaseMulticastLock()
+        super.onPause()
+    }
+
+    override fun onDestroy() {
+        releaseMulticastLock()
+        super.onDestroy()
+    }
+
+    private fun acquireMulticastLock() {
+        if (multicastLock?.isHeld == true) return
+        val wifiManager = applicationContext
+            .getSystemService(Context.WIFI_SERVICE) as? WifiManager ?: return
+        val lock = wifiManager.createMulticastLock("streamflow-device-discovery")
+        lock.setReferenceCounted(false)
+        try {
+            lock.acquire()
+            multicastLock = lock
+        } catch (_: Throwable) {
+            try {
+                if (lock.isHeld) lock.release()
+            } catch (_: Throwable) {
+                // Discovery services still get a chance to use platform-managed mDNS.
+            }
+        }
+    }
+
+    private fun releaseMulticastLock() {
+        val lock = multicastLock ?: return
+        multicastLock = null
+        try {
+            if (lock.isHeld) lock.release()
+        } catch (_: Throwable) {
+            // Ignore teardown races from Wi-Fi state changes.
+        }
+    }
+}
 '''
 
 
@@ -121,6 +182,20 @@ def configure(path: Path) -> None:
     drawable = path.parent / "res" / "drawable"
     drawable.mkdir(parents=True, exist_ok=True)
     (drawable / "streamflow_app_icon.xml").write_text(APP_ICON, encoding="utf-8")
+
+    # Android 12 and older Android 13 extension levels require an explicit
+    # MulticastLock for reliable foreground mDNS reception. It also improves
+    # SSDP/DLNA discovery on devices that aggressively filter multicast traffic.
+    main_activity = (
+        path.parent
+        / "kotlin"
+        / "com"
+        / "redshoxx"
+        / "streamflow"
+        / "MainActivity.kt"
+    )
+    main_activity.parent.mkdir(parents=True, exist_ok=True)
+    main_activity.write_text(MAIN_ACTIVITY, encoding="utf-8")
 
     ET.indent(tree, space="    ")
     tree.write(path, encoding="utf-8", xml_declaration=True)
