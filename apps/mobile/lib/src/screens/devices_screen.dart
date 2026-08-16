@@ -104,12 +104,18 @@ class _DevicesScreenState extends State<DevicesScreen> {
             Wrap(
               spacing: 8,
               runSpacing: 8,
-              children: const [
-                _ProtocolChip(icon: Icons.tv_rounded, label: 'StreamFlow'),
-                _ProtocolChip(icon: Icons.cast_rounded, label: 'Google Cast'),
-                _ProtocolChip(icon: Icons.connected_tv_rounded, label: 'DLNA / UPnP'),
+              children: [
+                const _ProtocolChip(icon: Icons.tv_rounded, label: 'StreamFlow'),
+                const _ProtocolChip(icon: Icons.cast_rounded, label: 'Google Cast'),
+                const _ProtocolChip(
+                  icon: Icons.connected_tv_rounded,
+                  label: 'DLNA / UPnP',
+                ),
                 if (Platform.isIOS)
-                  _ProtocolChip(icon: Icons.airplay_rounded, label: 'AirPlay'),
+                  const _ProtocolChip(
+                    icon: Icons.airplay_rounded,
+                    label: 'AirPlay',
+                  ),
               ],
             ),
             if (_scanning) ...[
