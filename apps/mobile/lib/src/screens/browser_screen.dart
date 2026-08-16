@@ -31,9 +31,14 @@ class _BrowserScreenState extends State<BrowserScreen> {
 
   final _adBlocker = AdBlocker();
   final List<BrowserTabSession> _tabs = <BrowserTabSession>[];
+  final Map<int, int> _handledIntentSerial = <int, int>{};
+  final Map<int, int> _handledDetectionSerial = <int, int>{};
+  final Set<String> _connectionPromptedPages = <String>{};
+  final Set<String> _promptedMedia = <String>{};
   var _activeIndex = 0;
   var _nextTabId = 1;
   var _adBlockEnabled = true;
+  var _castPromptOpen = false;
 
   BrowserTabSession get _active => _tabs[_activeIndex];
 
@@ -59,7 +64,146 @@ class _BrowserScreenState extends State<BrowserScreen> {
       );
 
   void _onTabChanged() {
-    if (mounted) setState(() {});
+    if (!mounted || _tabs.isEmpty) return;
+    setState(() {});
+
+    final active = _active;
+    final intentSerial = active.mediaIntentSerial;
+    final handledIntent = _handledIntentSerial[active.id] ?? 0;
+    if (intentSerial > handledIntent) {
+      _handledIntentSerial[active.id] = intentSerial;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(_handleMediaIntent(active));
+      });
+    }
+
+    final detectionSerial = active.mediaDetectionSerial;
+    final handledDetection = _handledDetectionSerial[active.id] ?? 0;
+    if (detectionSerial > handledDetection) {
+      _handledDetectionSerial[active.id] = detectionSerial;
+      if (_hasRecentMediaIntent(active) && active.pageMedia.isNotEmpty) {
+        final media = active.pageMedia.last;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          unawaited(_promptForDetectedMedia(active, media));
+        });
+      }
+    }
+  }
+
+  bool _hasRecentMediaIntent(BrowserTabSession tab) {
+    final at = tab.lastMediaIntentAt;
+    return at != null && DateTime.now().difference(at) < const Duration(seconds: 9);
+  }
+
+  Future<void> _handleMediaIntent(BrowserTabSession tab) async {
+    await Future<void>.delayed(const Duration(milliseconds: 650));
+    if (!mounted || _tabs.isEmpty || _active.id != tab.id || _castPromptOpen) {
+      return;
+    }
+
+    await tab.scan();
+    if (!mounted || _active.id != tab.id || !_hasRecentMediaIntent(tab)) return;
+
+    if (tab.pageMedia.isNotEmpty) {
+      await _promptForDetectedMedia(tab, tab.pageMedia.last);
+      return;
+    }
+
+    final preferred = widget.controller.preferredDevice;
+    if (preferred != null) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              'TV bereit: ${preferred.name}. StreamFlow sucht noch nach der Videoquelle.',
+            ),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      return;
+    }
+
+    final pageKey = '${tab.id}|${tab.currentUri ?? ''}';
+    if (_connectionPromptedPages.contains(pageKey)) return;
+    _connectionPromptedPages.add(pageKey);
+    _castPromptOpen = true;
+    final connect = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: const Icon(Icons.cast_rounded),
+        title: const Text('Video gestartet'),
+        content: const Text(
+          'StreamFlow sucht gerade nach der abspielbaren Videoquelle. Möchtest du den Fernseher jetzt schon verbinden? Sobald die Quelle erkannt wurde, kann sie direkt übertragen werden.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Später'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            icon: const Icon(Icons.tv_rounded),
+            label: const Text('TV verbinden'),
+          ),
+        ],
+      ),
+    );
+    _castPromptOpen = false;
+    if (connect == true && mounted) await _connectTv();
+  }
+
+  Future<void> _promptForDetectedMedia(
+    BrowserTabSession tab,
+    DetectedMedia media,
+  ) async {
+    if (!mounted || _tabs.isEmpty || _active.id != tab.id || _castPromptOpen) {
+      return;
+    }
+    final key = '${tab.id}|${tab.currentUri ?? ''}|${media.url}';
+    if (_promptedMedia.contains(key)) return;
+    _promptedMedia.add(key);
+
+    final preferred = widget.controller.preferredDevice;
+    _castPromptOpen = true;
+    final castNow = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: const Icon(Icons.video_collection_rounded),
+        title: const Text('Video erkannt'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              media.displayName,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              preferred == null
+                  ? 'Möchtest du dieses Video auf einem Fernseher anzeigen?'
+                  : 'Möchtest du dieses Video auf ${preferred.name} bzw. einem anderen Gerät anzeigen?',
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Nicht jetzt'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            icon: const Icon(Icons.cast_rounded),
+            label: Text(preferred == null ? 'Gerät wählen' : 'Auf TV anzeigen'),
+          ),
+        ],
+      ),
+    );
+    _castPromptOpen = false;
+    if (castNow == true && mounted) await _cast(media);
   }
 
   Future<void> _loadAdBlockSetting() async {
@@ -118,6 +262,8 @@ class _BrowserScreenState extends State<BrowserScreen> {
         _tabs[0] = replacement;
         _activeIndex = 0;
       });
+      _handledIntentSerial.remove(old.id);
+      _handledDetectionSerial.remove(old.id);
       old.dispose();
       unawaited(replacement.initialize(enableAdBlock: _adBlockEnabled));
       return;
@@ -132,6 +278,8 @@ class _BrowserScreenState extends State<BrowserScreen> {
         _activeIndex = _tabs.length - 1;
       }
     });
+    _handledIntentSerial.remove(old.id);
+    _handledDetectionSerial.remove(old.id);
     old.dispose();
   }
 
@@ -168,6 +316,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final favorite = widget.controller.isFavorite(_active.currentUri);
+    final preferredDevice = widget.controller.preferredDevice;
 
     return SafeArea(
       child: Column(
@@ -234,11 +383,20 @@ class _BrowserScreenState extends State<BrowserScreen> {
                   )
                 else
                   IconButton(
-                    tooltip: 'Auf TV übertragen',
-                    onPressed: _active.pageMedia.isEmpty
-                        ? null
-                        : () => _showMedia(context),
-                    icon: const Icon(Icons.cast_outlined),
+                    tooltip: _active.pageMedia.isEmpty
+                        ? preferredDevice == null
+                            ? 'Mit TV verbinden'
+                            : 'TV ändern: ${preferredDevice.name}'
+                        : 'Auf TV übertragen',
+                    onPressed: () => _active.pageMedia.isEmpty
+                        ? _connectTv()
+                        : _showMedia(context),
+                    icon: Icon(
+                      preferredDevice == null
+                          ? Icons.cast_outlined
+                          : Icons.cast_connected,
+                      color: preferredDevice == null ? null : colors.primary,
+                    ),
                   ),
               ],
             ),
@@ -300,6 +458,37 @@ class _BrowserScreenState extends State<BrowserScreen> {
               ),
             ),
           ),
+          if (preferredDevice != null && !widget.controller.isCasting)
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              padding: const EdgeInsets.fromLTRB(12, 7, 6, 7),
+              decoration: BoxDecoration(
+                color: colors.primaryContainer,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.cast_connected, color: colors.onPrimaryContainer),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Text(
+                      'TV bereit: ${preferredDevice.name}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: colors.onPrimaryContainer,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _connectTv,
+                    child: const Text('Ändern'),
+                  ),
+                ],
+              ),
+            ),
           if (_active.progress < 100)
             LinearProgressIndicator(
               value: _active.progress <= 0 ? null : _active.progress / 100,
@@ -555,6 +744,27 @@ class _BrowserScreenState extends State<BrowserScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _connectTv() async {
+    if (!mounted) return;
+    final target = await showDialog<CastTarget>(
+      context: context,
+      builder: (_) => CastMediaDialog(
+        preferredDeviceId: widget.controller.preferredDevice?.id,
+      ),
+    );
+    if (!mounted || target == null) return;
+    widget.controller.setPreferredDevice(target.device);
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            'TV bereit: ${target.device.name}. Starte jetzt ein Video – StreamFlow erkennt die Quelle automatisch.',
+          ),
+        ),
+      );
   }
 
   Future<void> _cast(DetectedMedia item) async {
