@@ -36,7 +36,7 @@ jobs:
         run: flutter test
       - name: Build release APK
         run: flutter build apk --release
-      - name: Prepare release APK
+      - name: Sign and verify release APK
         env:
           MOBILE_KEYSTORE_BASE64: ${{ secrets.ANDROID_MOBILE_KEYSTORE_BASE64 }}
           MOBILE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_MOBILE_KEYSTORE_PASSWORD }}
@@ -45,23 +45,34 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ../../dist
-          cp build/app/outputs/flutter-apk/app-release.apk ../../dist/StreamFlow-Mobile-release.apk
-
+          SOURCE_APK="build/app/outputs/flutter-apk/app-release.apk"
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+
           if [ -n "${MOBILE_KEYSTORE_BASE64:-}" ] && [ -n "${MOBILE_KEYSTORE_PASSWORD:-}" ] && [ -n "${MOBILE_KEY_ALIAS:-}" ] && [ -n "${MOBILE_KEY_PASSWORD:-}" ]; then
             echo "$MOBILE_KEYSTORE_BASE64" | base64 --decode > /tmp/streamflow-mobile.jks
-            "$APKSIGNER" sign \
-              --ks /tmp/streamflow-mobile.jks \
-              --ks-key-alias "$MOBILE_KEY_ALIAS" \
-              --ks-pass env:MOBILE_KEYSTORE_PASSWORD \
-              --key-pass env:MOBILE_KEY_PASSWORD \
-              --out ../../dist/StreamFlow-Mobile-release-signed.apk \
-              ../../dist/StreamFlow-Mobile-release.apk
-            mv ../../dist/StreamFlow-Mobile-release-signed.apk ../../dist/StreamFlow-Mobile-release.apk
-            rm -f /tmp/streamflow-mobile.jks
+          else
+            MOBILE_KEYSTORE_PASSWORD="streamflow-release"
+            MOBILE_KEY_PASSWORD="streamflow-release"
+            MOBILE_KEY_ALIAS="streamflow"
+            keytool -genkeypair -v \
+              -keystore /tmp/streamflow-mobile.jks \
+              -storepass "$MOBILE_KEYSTORE_PASSWORD" \
+              -keypass "$MOBILE_KEY_PASSWORD" \
+              -alias "$MOBILE_KEY_ALIAS" \
+              -keyalg RSA -keysize 3072 -validity 3650 \
+              -dname "CN=StreamFlow Sideload Release, OU=StreamFlow, O=redshoxx, C=AT"
           fi
 
+          "$APKSIGNER" sign \
+            --ks /tmp/streamflow-mobile.jks \
+            --ks-key-alias "$MOBILE_KEY_ALIAS" \
+            --ks-pass env:MOBILE_KEYSTORE_PASSWORD \
+            --key-pass env:MOBILE_KEY_PASSWORD \
+            --out ../../dist/StreamFlow-Mobile-release.apk \
+            "$SOURCE_APK"
           "$APKSIGNER" verify --verbose --print-certs ../../dist/StreamFlow-Mobile-release.apk
+          rm -f /tmp/streamflow-mobile.jks
+
           cd ../../dist
           sha256sum StreamFlow-Mobile-release.apk > StreamFlow-Mobile-release.apk.sha256
       - uses: actions/upload-artifact@v4
