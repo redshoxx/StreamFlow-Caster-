@@ -11,6 +11,15 @@ import 'airplay_cast_sheet.dart';
 import 'dlna_remote_sheet.dart';
 import 'google_cast_remote_sheet.dart';
 
+Future<void> _showAirPlayAndEnd(
+  BuildContext context,
+  StreamFlowController controller,
+  DetectedMedia media,
+) async {
+  await showAirPlayCastSheet(context, media);
+  controller.endCasting();
+}
+
 Future<void> showCastRemoteSheet(
   BuildContext context,
   StreamFlowController controller,
@@ -46,8 +55,7 @@ Future<void> showCastRemoteSheet(
       );
       break;
     case CastProtocol.airPlay:
-      await showAirPlayCastSheet(context, media);
-      controller.endCasting();
+      unawaited(_showAirPlayAndEnd(context, controller, media));
       return;
   }
 
