@@ -249,7 +249,7 @@ class MainActivity : ComponentActivity() {
                 DashboardStatusCard(
                     modifier = Modifier.weight(1f),
                     title = "Receiver",
-                    subtitle = "Im lokalen Netzwerk aktiv",
+                    subtitle = "Android TV • Google TV • Fire TV",
                 )
                 DashboardStatusCard(
                     modifier = Modifier.weight(1f),
@@ -270,7 +270,7 @@ class MainActivity : ComponentActivity() {
 
             Spacer(Modifier.weight(1f))
             Text(
-                "StreamFlow 0.6.0  •  Sicheres Pairing  •  Bereit für dein Smartphone",
+                "StreamFlow ${BuildConfig.VERSION_NAME}  •  Sicheres Pairing  •  Universal Casting Receiver",
                 color = StreamFlowMuted,
                 style = MaterialTheme.typography.bodySmall,
             )
